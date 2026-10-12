@@ -11,7 +11,9 @@
  *   VWORLD_DOMAIN   domain registered with the key, if the key requires one
  *   BBOX            "minLon,minLat,maxLon,maxLat" (default: City Hall area)
  *   LAYER           WFS type name (default: lt_c_spbd, building polygons)
- *   HEIGHT_FIELD    property holding building height in meters (default: buld_hg)
+ *   FLOORS_FIELD    property holding above-ground floor count (default: gro_flo_co)
+ *   FLOOR_HEIGHT    meters per floor used for the height estimate (default: 3.3)
+ *   HEIGHT_FIELD    optional property holding height in meters, takes precedence if set
  *   ID_FIELD        property used as a stable id (default: bd_mgt_sn)
  *   NAME_FIELD      property holding the building name (default: buld_nm)
  *   USAGE_FIELD     property holding the usage label (optional)
@@ -40,7 +42,11 @@ if (bbox.length !== 4 || bbox.some(Number.isNaN)) {
 }
 
 const LAYER = env.LAYER ?? 'lt_c_spbd';
-const HEIGHT_FIELD = env.HEIGHT_FIELD ?? 'buld_hg';
+// The lt_c_spbd layer has no height attribute, so height is estimated from the
+// above-ground floor count. Underground floors (und_flo_co) are not part of the height.
+const HEIGHT_FIELD = env.HEIGHT_FIELD;
+const FLOORS_FIELD = env.FLOORS_FIELD ?? 'gro_flo_co';
+const FLOOR_HEIGHT = Number(env.FLOOR_HEIGHT ?? 3.3);
 const ID_FIELD = env.ID_FIELD ?? 'bd_mgt_sn';
 const NAME_FIELD = env.NAME_FIELD ?? 'buld_nm';
 const USAGE_FIELD = env.USAGE_FIELD;
@@ -72,8 +78,11 @@ function outerRings(geometry) {
 function toRows(feature, index) {
   const props = feature.properties ?? {};
   const rawId = props[ID_FIELD] ?? feature.id ?? `row-${index}`;
-  const rawHeight = Number(props[HEIGHT_FIELD]);
-  const height = rawHeight > 0 ? round(rawHeight) : DEFAULT_HEIGHT;
+  const floors = Number(props[FLOORS_FIELD]);
+  const measured = HEIGHT_FIELD ? Number(props[HEIGHT_FIELD]) : NaN;
+  let height = DEFAULT_HEIGHT;
+  if (measured > 0) height = round(measured);
+  else if (floors > 0) height = round(floors * FLOOR_HEIGHT);
   const name = props[NAME_FIELD] || `Building ${rawId}`;
   const usage = (USAGE_FIELD && props[USAGE_FIELD]) || 'unknown';
 
@@ -152,10 +161,12 @@ if (rows.length === 0) {
   process.exit(1);
 }
 
-// Warn when heights look like the default, which usually means HEIGHT_FIELD is wrong.
+// Warn when every height falls back to the default, which means the floor field is missing or misnamed.
 const defaulted = rows.filter((r) => r.height === DEFAULT_HEIGHT).length;
 if (defaulted === rows.length) {
-  console.warn(`Every building got the default height (${DEFAULT_HEIGHT}m). Check HEIGHT_FIELD="${HEIGHT_FIELD}".`);
+  console.warn(`Every building got the default height (${DEFAULT_HEIGHT}m). Check FLOORS_FIELD="${FLOORS_FIELD}".`);
+} else {
+  console.log(`${defaulted} of ${rows.length} buildings have no floor count and use the default height.`);
 }
 
 await writeFile(OUT, toSql(rows), 'utf8');

@@ -98,7 +98,9 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 3. 범위를 바꾸려면 `BBOX="minLon,minLat,maxLon,maxLat"`을 지정합니다. 예: `BBOX="126.975,37.555,126.995,37.575"`.
 4. `supabase/seed-seoul.sql`이 생성되면 Supabase SQL 편집기에 붙여넣어 실행합니다. 재실행해도 같은 `id`는 덮어쓰기 됩니다.
 
-**확인이 필요한 항목.** 스크립트의 속성명(`HEIGHT_FIELD`, `ID_FIELD`, `NAME_FIELD`)은 기본값입니다. 실제 레이어 스키마와 다르면 빈 높이(10m 기본값)나 임의 이름이 들어갑니다. 큰 가져오기 전에 아래 URL로 스키마를 확인하고, 필요하면 환경변수로 덮어쓰세요.
+**높이 계산.** 건물 레이어에는 높이 속성이 없어서, 지상층수(`gro_flo_co`) × 층고(기본 3.3m)로 높이를 추정합니다. 층수가 없는 건물은 10m를 씁니다. 층고는 `FLOOR_HEIGHT`로 바꿀 수 있습니다. 지하층수는 높이에 반영하지 않습니다.
+
+**확인이 필요한 항목.** 스크립트의 속성명(`FLOORS_FIELD`, `ID_FIELD`, `NAME_FIELD`)은 기본값입니다. 실제 레이어 스키마와 다르면 임의 이름이나 기본 높이가 들어갑니다. 큰 가져오기 전에 아래 URL로 스키마를 확인하고, 필요하면 환경변수로 덮어쓰세요.
 
 ```
 https://api.vworld.kr/req/wfs?service=WFS&version=1.1.0&request=DescribeFeatureType&typename=lt_c_spbd&key=발급받은키
