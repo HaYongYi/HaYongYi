@@ -21,6 +21,8 @@ export interface Building {
   color: string;
   /** Outer ring of the footprint as [x, z] pairs in meters (optional). */
   footprint?: [number, number][];
+  /** Depth of the underground part below ground level, in meters (0 or undefined = none). */
+  basementDepth?: number;
 }
 
 /**

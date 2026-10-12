@@ -14,6 +14,7 @@ interface BuildingRow {
   height: number;
   color: string;
   footprint: [number, number][] | null;
+  basement_depth: number;
 }
 
 /** Row shape of the `roads` table. */
@@ -51,7 +52,7 @@ export async function loadCity(): Promise<LoadedCity> {
   const [buildingsResult, roadsResult] = await Promise.all([
     supabase
       .from('buildings')
-      .select('id, name, usage, x, z, width, depth, height, color, footprint')
+      .select('id, name, usage, x, z, width, depth, height, color, footprint, basement_depth')
       .order('id'),
     supabase.from('roads').select('id, name, width, points').order('id'),
   ]);
@@ -77,6 +78,7 @@ export async function loadCity(): Promise<LoadedCity> {
       height: row.height,
       color: row.color,
       footprint: row.footprint ?? undefined,
+      basementDepth: row.basement_depth > 0 ? row.basement_depth : undefined,
     })),
     roads: roadsResult.error
       ? []

@@ -14,6 +14,17 @@ interface CityViewerProps {
 const ROAD_Y = 0.03;
 const DEFAULT_ROAD_WIDTH = 8;
 const ROAD_COLOR = '#5d6571';
+const BASEMENT_COLOR = '#6f9bc2';
+const GROUND_OPACITY_WITH_BASEMENT = 0.2;
+const BUILDING_OPACITY_WITH_BASEMENT = 0.3;
+
+/** With the basement view on, buildings and ground turn translucent so underground volumes show through. */
+function setTranslucent(material: THREE.MeshStandardMaterial, on: boolean, opacity: number) {
+  material.transparent = on;
+  material.opacity = on ? opacity : 1;
+  material.depthWrite = !on;
+  material.needsUpdate = true;
+}
 
 const BACKGROUND = '#e9edf2';
 const HOVER_EMISSIVE = '#4cc9f0';
@@ -25,22 +36,21 @@ type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
 type BuildingMesh = THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
 
 /**
- * Builds the solid for one building. Uses the real footprint when available,
- * otherwise a box. Geometry is baked in world-aligned meters, so the mesh
- * only needs to be placed at (x, 0, z).
+ * Solid with its base at y = 0 and its top at y = `height`. Uses the real footprint
+ * when available, otherwise a box.
  */
-function createBuildingGeometry(b: Building): THREE.BufferGeometry {
+function createPrism(b: Building, height: number): THREE.BufferGeometry {
   if (b.footprint && b.footprint.length >= 3) {
     // Shape lives in the XY plane. After rotating -90° about X, shape y maps to -z,
     // so negate z here to keep the footprint's orientation, and extrude along +y.
     const shape = new THREE.Shape(b.footprint.map(([x, z]) => new THREE.Vector2(x - b.x, -(z - b.z))));
-    const geometry = new THREE.ExtrudeGeometry(shape, { depth: b.height, bevelEnabled: false });
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
     geometry.rotateX(-Math.PI / 2);
     return geometry;
   }
 
-  const geometry = new THREE.BoxGeometry(b.width, b.height, b.depth);
-  geometry.translate(0, b.height / 2, 0);
+  const geometry = new THREE.BoxGeometry(b.width, height, b.depth);
+  geometry.translate(0, height / 2, 0);
   return geometry;
 }
 
@@ -57,6 +67,7 @@ function computeBounds(buildings: Building[]): Bounds {
   }
   return bounds;
 }
+
 
 /**
  * Turns road centerlines into one flat triangle strip mesh. Each segment becomes a
@@ -100,6 +111,11 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
 export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Building | null>(null);
+  const [showBasement, setShowBasement] = useState(false);
+  // Read by the scene effect so a rebuild keeps the current toggle state
+  const showBasementRef = useRef(false);
+  // Handles the toggle needs after the scene is built
+  const viewRef = useRef<{ ground: THREE.Mesh; basement: THREE.Group; buildings: BuildingMesh[] } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -181,7 +197,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
     const meshes: BuildingMesh[] = [];
     for (const b of buildings) {
       const material = new THREE.MeshStandardMaterial({ color: b.color, roughness: 0.7, metalness: 0.05 });
-      const mesh: BuildingMesh = new THREE.Mesh(createBuildingGeometry(b), material);
+      const mesh: BuildingMesh = new THREE.Mesh(createPrism(b, b.height), material);
       mesh.position.set(b.x, 0, b.z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -189,6 +205,29 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       city.add(mesh);
       meshes.push(mesh);
     }
+
+    // Underground volumes sit below ground; hidden until the toggle is on
+    const basement = new THREE.Group();
+    basement.visible = showBasementRef.current;
+    scene.add(basement);
+    const basementMaterial = new THREE.MeshStandardMaterial({
+      color: BASEMENT_COLOR,
+      transparent: true,
+      opacity: 0.6,
+      depthWrite: false,
+    });
+    const basementGeometries: THREE.BufferGeometry[] = [];
+    for (const b of buildings) {
+      if (!b.basementDepth) continue;
+      const geometry = createPrism(b, b.basementDepth);
+      geometry.translate(0, -b.basementDepth, 0);
+      basementGeometries.push(geometry);
+      basement.add(new THREE.Mesh(geometry, basementMaterial));
+    }
+    const on = showBasementRef.current;
+    setTranslucent(ground.material as THREE.MeshStandardMaterial, on, GROUND_OPACITY_WITH_BASEMENT);
+    for (const mesh of meshes) setTranslucent(mesh.material, on, BUILDING_OPACITY_WITH_BASEMENT);
+    viewRef.current = { ground, basement, buildings: meshes };
 
     // Hover and selection highlighting
     let hovered: BuildingMesh | null = null;
@@ -298,6 +337,9 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       grid.dispose();
       roadGeometry.dispose();
       roadMaterial.dispose();
+      for (const geometry of basementGeometries) geometry.dispose();
+      basementMaterial.dispose();
+      viewRef.current = null;
       sun.shadow.map?.dispose();
 
       renderer.dispose();
@@ -305,9 +347,28 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
     };
   }, [buildings, roads]);
 
+  useEffect(() => {
+    showBasementRef.current = showBasement;
+    const view = viewRef.current;
+    if (!view) return;
+    view.basement.visible = showBasement;
+    setTranslucent(view.ground.material as THREE.MeshStandardMaterial, showBasement, GROUND_OPACITY_WITH_BASEMENT);
+    for (const mesh of view.buildings) {
+      setTranslucent(mesh.material, showBasement, BUILDING_OPACITY_WITH_BASEMENT);
+    }
+  }, [showBasement]);
+
   return (
     <div className="viewer">
       <div ref={containerRef} className="viewer-canvas" />
+      <button
+        type="button"
+        className="toggle"
+        aria-pressed={showBasement}
+        onClick={() => setShowBasement((value) => !value)}
+      >
+        {showBasement ? '지하 숨기기' : '지하 보기'}
+      </button>
       {selected && (
         <aside className="info-panel" aria-live="polite">
           <header>

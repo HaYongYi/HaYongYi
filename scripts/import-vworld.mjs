@@ -13,6 +13,7 @@
  *   LAYER           WFS type name (default: lt_c_spbd, building polygons)
  *   FLOORS_FIELD    property holding above-ground floor count (default: gro_flo_co)
  *   FLOOR_HEIGHT    meters per floor used for the height estimate (default: 3.3)
+ *   BASEMENT_FIELD  property holding below-ground floor count (default: und_flo_co)
  *   HEIGHT_FIELD    optional property holding height in meters, takes precedence if set
  *   ID_FIELD        property used as a stable id (default: bd_mgt_sn)
  *   NAME_FIELD      property holding the building name (default: buld_nm)
@@ -46,6 +47,7 @@ const LAYER = env.LAYER ?? 'lt_c_spbd';
 // above-ground floor count. Underground floors (und_flo_co) are not part of the height.
 const HEIGHT_FIELD = env.HEIGHT_FIELD;
 const FLOORS_FIELD = env.FLOORS_FIELD ?? 'gro_flo_co';
+const BASEMENT_FIELD = env.BASEMENT_FIELD ?? 'und_flo_co';
 const FLOOR_HEIGHT = Number(env.FLOOR_HEIGHT ?? 3.3);
 const ID_FIELD = env.ID_FIELD ?? 'bd_mgt_sn';
 const NAME_FIELD = env.NAME_FIELD ?? 'buld_nm';
@@ -85,6 +87,8 @@ function toRows(feature, index) {
   else if (floors > 0) height = round(floors * FLOOR_HEIGHT);
   const name = props[NAME_FIELD] || `Building ${rawId}`;
   const usage = (USAGE_FIELD && props[USAGE_FIELD]) || 'unknown';
+  const basements = Number(props[BASEMENT_FIELD]);
+  const basementDepth = basements > 0 ? round(basements * FLOOR_HEIGHT) : 0;
 
   return outerRings(feature.geometry)
     .filter((ring) => ring && ring.length >= 4)
@@ -107,6 +111,7 @@ function toRows(feature, index) {
         height,
         color: '#b8bfc8',
         footprint,
+        basementDepth,
       };
     });
 }
@@ -130,16 +135,17 @@ function toSql(rows) {
         r.height,
         sqlString(r.color),
         `${sqlString(JSON.stringify(r.footprint))}::jsonb`,
+        r.basementDepth,
       ].join(', ')})`,
   );
   return [
     ...header,
-    'insert into public.buildings (id, name, usage, x, z, width, depth, height, color, footprint) values',
+    'insert into public.buildings (id, name, usage, x, z, width, depth, height, color, footprint, basement_depth) values',
     values.join(',\n'),
     'on conflict (id) do update set',
     '  name = excluded.name, usage = excluded.usage, x = excluded.x, z = excluded.z,',
     '  width = excluded.width, depth = excluded.depth, height = excluded.height,',
-    '  color = excluded.color, footprint = excluded.footprint;',
+    '  color = excluded.color, footprint = excluded.footprint, basement_depth = excluded.basement_depth;',
     '',
   ].join('\n');
 }

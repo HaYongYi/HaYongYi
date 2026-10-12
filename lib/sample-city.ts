@@ -98,6 +98,7 @@ export function createSampleCity(seed = 42): Building[] {
             color: palette[Math.floor(random() * palette.length)],
             // Roughly 1 in 3 buildings get an L-shaped footprint to exercise polygon rendering.
             footprint: random() < 0.33 ? lShape(x, z, width, depth) : undefined,
+            basementDepth: isCentralBlock && random() < 0.4 ? 6 + Math.round(random() * 6) : undefined,
           });
         }
       }
