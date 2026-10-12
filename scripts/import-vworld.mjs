@@ -77,7 +77,7 @@ function outerRing(geometry) {
   return null;
 }
 
-async function fetchFeatures() {
+async function fetchFeatures(bboxValue) {
   const params = new URLSearchParams({
     service: 'WFS',
     version: '1.1.0',
@@ -85,7 +85,7 @@ async function fetchFeatures() {
     typename: LAYER,
     srsName: 'EPSG:4326',
     output: 'application/json',
-    bbox: `${minLon},${minLat},${maxLon},${maxLat},EPSG:4326`,
+    bbox: bboxValue,
     maxFeatures: String(MAX_FEATURES),
     key: apiKey,
   });
@@ -171,7 +171,17 @@ function toSql(rows) {
   ].join('\n');
 }
 
-const features = await fetchFeatures();
+// EPSG:4326 is lat/lon axis order in WFS 1.1.0 per the OGC spec, but some servers
+// expect lon/lat. Try lon,lat first, then lat,lon if nothing comes back.
+const BBOX_LONLAT = `${minLon},${minLat},${maxLon},${maxLat},EPSG:4326`;
+const BBOX_LATLON = `${minLat},${minLon},${maxLat},${maxLon},EPSG:4326`;
+
+let features = await fetchFeatures(BBOX_LONLAT);
+if (features.length === 0) {
+  console.warn('0 features with lon,lat bbox order. Retrying with lat,lon order...');
+  features = await fetchFeatures(BBOX_LATLON);
+  if (features.length > 0) console.log('lat,lon order worked. Consider keeping it as the default.');
+}
 console.log(`Received ${features.length} features from ${LAYER}`);
 if (features.length >= MAX_FEATURES) {
   console.warn(`Hit MAX_FEATURES=${MAX_FEATURES}. Narrow BBOX or raise MAX_FEATURES to get the rest.`);
