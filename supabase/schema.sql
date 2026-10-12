@@ -11,8 +11,12 @@ create table if not exists public.buildings (
   depth    double precision not null check (depth > 0),
   height   double precision not null check (height > 0),
   color    text not null default '#b0b8c4' check (color ~ '^#[0-9a-fA-F]{6}$'),
+  footprint jsonb,                              -- optional outer ring: [[x, z], ...] in meters
   created_at timestamptz not null default now()
 );
+
+-- For databases created before the footprint column existed.
+alter table public.buildings add column if not exists footprint jsonb;
 
 alter table public.buildings enable row level security;
 

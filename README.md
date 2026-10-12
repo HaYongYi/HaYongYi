@@ -80,6 +80,32 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 
 환경변수가 없거나 쿼리가 실패하면 샘플 도시로 대체되며, 헤더의 "data source"에 현재 출처가 표시됩니다.
 
+## 서울 데이터 가져오기 (브이월드)
+
+[브이월드(VWorld)](https://www.vworld.kr) 건물 레이어(`lt_c_spbd`)의 실제 외곽선으로 서울 도시를 만들 수 있습니다. 가져오기는 PC에서 실행합니다.
+
+1. 브이월드에서 Open API 키를 발급받습니다.
+2. 프로젝트 루트에서 실행합니다. 기본 범위는 서울시청 주변입니다.
+
+   ```bash
+   # macOS / Linux
+   VWORLD_API_KEY=발급받은키 npm run import:seoul
+
+   # Windows PowerShell
+   $env:VWORLD_API_KEY="발급받은키"; npm run import:seoul
+   ```
+
+3. 범위를 바꾸려면 `BBOX="minLon,minLat,maxLon,maxLat"`을 지정합니다. 예: `BBOX="126.975,37.555,126.995,37.575"`.
+4. `supabase/seed-seoul.sql`이 생성되면 Supabase SQL 편집기에 붙여넣어 실행합니다. 재실행해도 같은 `id`는 덮어쓰기 됩니다.
+
+**확인이 필요한 항목.** 스크립트의 속성명(`HEIGHT_FIELD`, `ID_FIELD`, `NAME_FIELD`)은 기본값입니다. 실제 레이어 스키마와 다르면 빈 높이(10m 기본값)나 임의 이름이 들어갑니다. 큰 가져오기 전에 아래 URL로 스키마를 확인하고, 필요하면 환경변수로 덮어쓰세요.
+
+```
+https://api.vworld.kr/req/wfs?service=WFS&version=1.1.0&request=DescribeFeatureType&typename=lt_c_spbd&key=발급받은키
+```
+
+**참고.** 건물 수가 많으면 SQL 파일이 커서 편집기에서 느릴 수 있습니다. 이 경우 `BBOX`를 나눠서 여러 번 가져오세요. 가져온 건물이 수천 개를 넘으면 렌더링 부담이 커지므로 `InstancedMesh` 전환을 검토하세요.
+
 ## Vercel 배포
 
 1. 이 저장소를 Vercel에 Import 합니다. Framework는 Next.js로 자동 감지됩니다.
@@ -90,6 +116,6 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 
 ## 알려진 제약과 다음 단계
 
-- 현재 건물은 직사각형 footprint만 지원합니다. 실제 도시 모델(GeoJSON, CityGML 등)의 임의 다각형 footprint는 `Building`에 폴리곤 필드를 추가하고 `THREE.Shape` + `ExtrudeGeometry`로 확장하는 것이 자연스럽습니다.
-- 건물 수가 수천 개를 넘으면 머티리얼/메쉬를 건물마다 만드는 대신 `InstancedMesh`로 바꾸는 것을 권장합니다.
+- 건물 외곽선은 `footprint`(다각형)가 있으면 `ExtrudeGeometry`로, 없으면 직사각형 박스로 그립니다. 공원·도로 등 건물이 아닌 레이어는 아직 없습니다.
+- 건물마다 메쉬를 만들기 때문에 수천 개 이상에서는 `InstancedMesh`로 바꾸는 것을 권장합니다.
 - 좌표계는 미터 단위의 로컬 평면입니다. 지리 좌표(위경도)를 쓰려면 투영 변환 단계가 필요합니다.

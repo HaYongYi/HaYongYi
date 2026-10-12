@@ -19,6 +19,20 @@ const USAGES = [
   { usage: 'park', colors: ['#6f9e6a'] },
 ] as const;
 
+/** L-shaped outer ring inside the w x d box centered on (x, z). */
+function lShape(x: number, z: number, w: number, d: number): [number, number][] {
+  const hw = w / 2;
+  const hd = d / 2;
+  return [
+    [x - hw, z - hd],
+    [x + hw, z - hd],
+    [x + hw, z],
+    [x, z],
+    [x, z + hd],
+    [x - hw, z + hd],
+  ];
+}
+
 /**
  * Generates a grid-based sample city. Used when Supabase is not configured,
  * so the viewer is usable immediately after cloning.
@@ -69,17 +83,21 @@ export function createSampleCity(seed = 42): Building[] {
           const tall = isCentralBlock ? 60 + random() * 140 : 12 + random() * 50;
           const width = cellW * (0.55 + random() * 0.3);
           const depth = cellD * (0.55 + random() * 0.3);
+          const x = originX + cellW * (c + 0.5);
+          const z = originZ + cellD * (r + 0.5);
 
           buildings.push({
             id: `sample-${index}`,
             name: `${kind.usage[0].toUpperCase()}${kind.usage.slice(1)} ${index}`,
             usage: kind.usage,
-            x: originX + cellW * (c + 0.5),
-            z: originZ + cellD * (r + 0.5),
+            x,
+            z,
             width,
             depth,
             height: Math.round(tall),
             color: palette[Math.floor(random() * palette.length)],
+            // Roughly 1 in 3 buildings get an L-shaped footprint to exercise polygon rendering.
+            footprint: random() < 0.33 ? lShape(x, z, width, depth) : undefined,
           });
         }
       }

@@ -13,6 +13,7 @@ interface BuildingRow {
   depth: number;
   height: number;
   color: string;
+  footprint: [number, number][] | null;
 }
 
 function getSupabase(): SupabaseClient | null {
@@ -39,7 +40,7 @@ export async function loadCity(): Promise<LoadedCity> {
 
   const { data, error } = await supabase
     .from('buildings')
-    .select('id, name, usage, x, z, width, depth, height, color')
+    .select('id, name, usage, x, z, width, depth, height, color, footprint')
     .order('id');
 
   if (error) {
@@ -58,6 +59,7 @@ export async function loadCity(): Promise<LoadedCity> {
       depth: row.depth,
       height: row.height,
       color: row.color,
+      footprint: row.footprint ?? undefined,
     })),
     source: 'supabase',
   };

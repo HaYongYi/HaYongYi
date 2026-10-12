@@ -16,7 +16,27 @@ const SELECTED_EMISSIVE = '#ff7a3d';
 const CLICK_TOLERANCE = 4;
 
 type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
-type BuildingMesh = THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+type BuildingMesh = THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+
+/**
+ * Builds the solid for one building. Uses the real footprint when available,
+ * otherwise a box. Geometry is baked in world-aligned meters, so the mesh
+ * only needs to be placed at (x, 0, z).
+ */
+function createBuildingGeometry(b: Building): THREE.BufferGeometry {
+  if (b.footprint && b.footprint.length >= 3) {
+    // Shape lives in the XY plane. After rotating -90° about X, shape y maps to -z,
+    // so negate z here to keep the footprint's orientation, and extrude along +y.
+    const shape = new THREE.Shape(b.footprint.map(([x, z]) => new THREE.Vector2(x - b.x, -(z - b.z))));
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: b.height, bevelEnabled: false });
+    geometry.rotateX(-Math.PI / 2);
+    return geometry;
+  }
+
+  const geometry = new THREE.BoxGeometry(b.width, b.height, b.depth);
+  geometry.translate(0, b.height / 2, 0);
+  return geometry;
+}
 
 function computeBounds(buildings: Building[]): Bounds {
   if (buildings.length === 0) {
@@ -98,17 +118,14 @@ export default function CityViewer({ buildings }: CityViewerProps) {
     grid.position.set(centerX, 0, centerZ);
     scene.add(grid);
 
-    // Buildings: one unit box (base at y = 0), scaled per building
+    // Buildings: one mesh per building, geometry already in world meters
     const city = new THREE.Group();
     scene.add(city);
-    const unitBox = new THREE.BoxGeometry(1, 1, 1);
-    unitBox.translate(0, 0.5, 0);
 
     const meshes: BuildingMesh[] = [];
     for (const b of buildings) {
       const material = new THREE.MeshStandardMaterial({ color: b.color, roughness: 0.7, metalness: 0.05 });
-      const mesh: BuildingMesh = new THREE.Mesh(unitBox, material);
-      mesh.scale.set(b.width, b.height, b.depth);
+      const mesh: BuildingMesh = new THREE.Mesh(createBuildingGeometry(b), material);
       mesh.position.set(b.x, 0, b.z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -216,8 +233,10 @@ export default function CityViewer({ buildings }: CityViewerProps) {
       canvas.removeEventListener('pointerleave', onPointerLeave);
       controls.dispose();
 
-      for (const mesh of meshes) mesh.material.dispose();
-      unitBox.dispose();
+      for (const mesh of meshes) {
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
       ground.geometry.dispose();
       (ground.material as THREE.Material).dispose();
       grid.dispose();
