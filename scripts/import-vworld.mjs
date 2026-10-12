@@ -15,7 +15,7 @@
  *   ID_FIELD        property used as a stable id (default: bd_mgt_sn)
  *   NAME_FIELD      property holding the building name (default: buld_nm)
  *   USAGE_FIELD     property holding the usage label (optional)
- *   MAX_FEATURES    upper bound per request (default: 5000)
+ *   MAX_FEATURES    upper bound per request (default: 1000; VWorld rejects larger values for this key)
  *   OUT             output path (default: supabase/seed-seoul.sql)
  *
  * The property names above are defaults. Confirm them against the layer's
@@ -45,7 +45,7 @@ const HEIGHT_FIELD = env.HEIGHT_FIELD ?? 'buld_hg';
 const ID_FIELD = env.ID_FIELD ?? 'bd_mgt_sn';
 const NAME_FIELD = env.NAME_FIELD ?? 'buld_nm';
 const USAGE_FIELD = env.USAGE_FIELD;
-const MAX_FEATURES = Number(env.MAX_FEATURES ?? 5000);
+const MAX_FEATURES = Number(env.MAX_FEATURES ?? 1000);
 const OUT = env.OUT ?? 'supabase/seed-seoul.sql';
 const DEFAULT_HEIGHT = 10;
 
