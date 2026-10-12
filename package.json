@@ -1,5 +1,5 @@
 {
-  "name": "city-model-viewer",
+  "name": "hayongyi-env-webcity",
   "version": "0.1.0",
   "private": true,
   "description": "Web UI for visualizing urban models with Three.js, backed by Supabase",
