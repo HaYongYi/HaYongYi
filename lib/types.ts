@@ -22,3 +22,14 @@ export interface Building {
   /** Outer ring of the footprint as [x, z] pairs in meters (optional). */
   footprint?: [number, number][];
 }
+
+/**
+ * A road centerline in the same meter space as buildings.
+ * `points` is the polyline as [x, z] pairs; `width` is the road width in meters.
+ */
+export interface Road {
+  id: string;
+  name: string;
+  width: number;
+  points: [number, number][];
+}

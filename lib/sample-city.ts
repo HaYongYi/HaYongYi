@@ -1,4 +1,4 @@
-import type { Building } from './types';
+import type { Building, Road } from './types';
 
 /** Mulberry32: small deterministic PRNG so server and client render the same city. */
 function createRandom(seed: number) {
@@ -105,4 +105,41 @@ export function createSampleCity(seed = 42): Building[] {
   }
 
   return buildings;
+}
+
+/**
+ * Street centerlines for the sample grid. Roads run along the gaps between blocks,
+ * so they line up with the layout produced by createSampleCity().
+ */
+export function createSampleRoads(): Road[] {
+  const blocks = 6;
+  const blockSize = 120;
+  const street = 24;
+  const pitch = blockSize + street;
+  const extent = (blocks / 2) * pitch;
+  const roads: Road[] = [];
+
+  for (let i = 0; i <= blocks; i++) {
+    const offset = (i - blocks / 2) * pitch - street / 2;
+    roads.push({
+      id: `sample-road-ns-${i}`,
+      name: `Avenue ${i + 1}`,
+      width: street,
+      points: [
+        [offset, -extent],
+        [offset, extent],
+      ],
+    });
+    roads.push({
+      id: `sample-road-ew-${i}`,
+      name: `Street ${i + 1}`,
+      width: street,
+      points: [
+        [-extent, offset],
+        [extent, offset],
+      ],
+    });
+  }
+
+  return roads;
 }

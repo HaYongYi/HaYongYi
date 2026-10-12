@@ -3,11 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Building } from '@/lib/types';
+import type { Building, Road } from '@/lib/types';
 
 interface CityViewerProps {
   buildings: Building[];
+  roads?: Road[];
 }
+
+/** Road surface sits just above the ground plane so it is not hidden by z-fighting. */
+const ROAD_Y = 0.03;
+const DEFAULT_ROAD_WIDTH = 8;
+const ROAD_COLOR = '#5d6571';
 
 const BACKGROUND = '#e9edf2';
 const HOVER_EMISSIVE = '#4cc9f0';
@@ -52,7 +58,46 @@ function computeBounds(buildings: Building[]): Bounds {
   return bounds;
 }
 
-export default function CityViewer({ buildings }: CityViewerProps) {
+/**
+ * Turns road centerlines into one flat triangle strip mesh. Each segment becomes a
+ * quad offset by half the road width on either side of the line.
+ */
+function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const indices: number[] = [];
+
+  for (const road of roads) {
+    const half = (road.width > 0 ? road.width : DEFAULT_ROAD_WIDTH) / 2;
+    for (let i = 0; i < road.points.length - 1; i++) {
+      const [x0, z0] = road.points[i];
+      const [x1, z1] = road.points[i + 1];
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const length = Math.hypot(dx, dz);
+      if (length === 0) continue;
+
+      // Unit normal to the segment in the XZ plane, scaled to half the width
+      const nx = (-dz / length) * half;
+      const nz = (dx / length) * half;
+      const base = positions.length / 3;
+      positions.push(
+        x0 + nx, ROAD_Y, z0 + nz,
+        x0 - nx, ROAD_Y, z0 - nz,
+        x1 + nx, ROAD_Y, z1 + nz,
+        x1 - nx, ROAD_Y, z1 - nz,
+      );
+      indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Building | null>(null);
 
@@ -117,6 +162,17 @@ export default function CityViewer({ buildings }: CityViewerProps) {
     const grid = new THREE.GridHelper(groundSize, 40, '#b7c0cb', '#cfd6df');
     grid.position.set(centerX, 0, centerZ);
     scene.add(grid);
+
+    // Roads: one merged mesh for all centerlines
+    const roadGeometry = buildRoadGeometry(roads);
+    const roadMaterial = new THREE.MeshStandardMaterial({
+      color: ROAD_COLOR,
+      roughness: 1,
+      side: THREE.DoubleSide,
+    });
+    const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
+    roadMesh.receiveShadow = true;
+    scene.add(roadMesh);
 
     // Buildings: one mesh per building, geometry already in world meters
     const city = new THREE.Group();
@@ -240,12 +296,14 @@ export default function CityViewer({ buildings }: CityViewerProps) {
       ground.geometry.dispose();
       (ground.material as THREE.Material).dispose();
       grid.dispose();
+      roadGeometry.dispose();
+      roadMaterial.dispose();
       sun.shadow.map?.dispose();
 
       renderer.dispose();
       canvas.remove();
     };
-  }, [buildings]);
+  }, [buildings, roads]);
 
   return (
     <div className="viewer">

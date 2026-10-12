@@ -5,7 +5,7 @@ import { loadCity } from '@/lib/supabase';
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
-  const { buildings, source } = await loadCity();
+  const { buildings, roads, source } = await loadCity();
 
   return (
     <main className="page">
@@ -13,12 +13,13 @@ export default async function Page() {
         <div>
           <h1>City Model Viewer</h1>
           <p className="meta">
-            {buildings.length.toLocaleString()} buildings · data source: {source === 'supabase' ? 'Supabase' : 'sample city'}
+            {buildings.length.toLocaleString()} buildings · {roads.length.toLocaleString()} roads · data source:{' '}
+            {source === 'supabase' ? 'Supabase' : 'sample city'}
           </p>
         </div>
         <p className="hint">Drag to orbit · scroll to zoom · click a building for details</p>
       </header>
-      <CityViewer buildings={buildings} />
+      <CityViewer buildings={buildings} roads={roads} />
     </main>
   );
 }

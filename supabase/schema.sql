@@ -27,6 +27,24 @@ create policy "buildings are readable by anyone"
   to anon, authenticated
   using (true);
 
+-- Road centerlines (VWorld lt_l_n3a0020000). One row per road segment polyline.
+create table if not exists public.roads (
+  id        text primary key,
+  name      text not null default '',
+  width     double precision not null default 8 check (width > 0),  -- meters
+  points    jsonb not null,                                          -- [[x, z], ...] in meters
+  created_at timestamptz not null default now()
+);
+
+alter table public.roads enable row level security;
+
+drop policy if exists "roads are readable by anyone" on public.roads;
+create policy "roads are readable by anyone"
+  on public.roads
+  for select
+  to anon, authenticated
+  using (true);
+
 -- Writes are intentionally not granted to anon/authenticated.
 -- Load data with the service role key from a trusted environment (never expose it to the browser).
 

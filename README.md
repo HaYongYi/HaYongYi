@@ -106,6 +106,23 @@ https://api.vworld.kr/req/wfs?service=WFS&version=1.1.0&request=DescribeFeatureT
 
 **참고.** 건물 수가 많으면 SQL 파일이 커서 편집기에서 느릴 수 있습니다. 이 경우 `BBOX`를 나눠서 여러 번 가져오세요. 가져온 건물이 수천 개를 넘으면 렌더링 부담이 커지므로 `InstancedMesh` 전환을 검토하세요.
 
+## 서울 도로 가져오기 (브이월드)
+
+도로 중심선(`lt_l_n3a0020000`)을 `roads` 표에 넣습니다. 건물과 별도 레이어로 관리하므로 건물 데이터를 다시 가져올 필요가 없습니다.
+
+1. `supabase/schema.sql`을 한 번 실행해서 `roads` 표를 만듭니다. (이미 실행했다면 생략)
+2. 건물 가져오기와 같은 키로 실행합니다.
+
+   ```powershell
+   $env:VWORLD_API_KEY="발급받은키"
+   $env:VWORLD_DOMAIN="https://hayongyi-env-webcity.vercel.app"
+   npm run import:roads
+   ```
+
+3. 생성된 `supabase/seed-roads.sql`을 Supabase SQL 편집기에서 실행합니다.
+
+도로폭은 `rvwd` 속성을 쓰고, 값이 없으면 8m로 그립니다. 도로가 아직 없어도 건물은 정상적으로 표시됩니다.
+
 ## Vercel 배포
 
 1. 이 저장소를 Vercel에 Import 합니다. Framework는 Next.js로 자동 감지됩니다.
