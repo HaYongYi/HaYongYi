@@ -9,17 +9,18 @@
  *
  * Optional environment variables:
  *   VWORLD_DOMAIN   domain registered with the key, if the key requires one
- *   BBOX            "minLon,minLat,maxLon,maxLat" (default: City Hall area)
+ *   BBOX            "minLon,minLat,maxLon,maxLat" (default: Jung/Jongno, about 6 x 5 km)
  *   MAX_FEATURES    per-request cap (default: 1000); the box is split automatically
  *   OUT             output path (default: supabase/seed-roads.sql)
+ *   ROWS_PER_FILE   rows per SQL file; larger sets are split into -001, -002, ... (default: 2000)
  *
  * Layer: lt_l_n3a0020000 (도로 중심선). Attributes used:
  *   ufid   stable id          rdnm   road name
  *   rvwd   road width (m)     (default width 8 m when missing)
  */
 
-import { writeFile } from 'node:fs/promises';
 import { fetchAllFeatures } from './lib/vworld-wfs.mjs';
+import { writeSqlChunks } from './lib/sql-chunks.mjs';
 
 const LAYER = 'lt_l_n3a0020000';
 const ID_FIELD = 'ufid';
@@ -34,7 +35,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const [minLon, minLat, maxLon, maxLat] = (env.BBOX ?? '126.970,37.560,126.990,37.572')
+const [minLon, minLat, maxLon, maxLat] = (env.BBOX ?? '126.945,37.545,127.015,37.590')
   .split(',')
   .map(Number);
 if ([minLon, minLat, maxLon, maxLat].some(Number.isNaN)) {
@@ -44,6 +45,7 @@ if ([minLon, minLat, maxLon, maxLat].some(Number.isNaN)) {
 
 const MAX_FEATURES = Number(env.MAX_FEATURES ?? 1000);
 const OUT = env.OUT ?? 'supabase/seed-roads.sql';
+const ROWS_PER_FILE = Number(env.ROWS_PER_FILE ?? 2000);
 
 // Same local meter frame as the buildings import (origin: Seoul City Hall, x east, z south).
 const ORIGIN_LON = 126.978;
@@ -121,6 +123,7 @@ if (rows.length === 0) {
   process.exit(1);
 }
 
-await writeFile(OUT, toSql(rows), 'utf8');
-console.log(`Wrote ${rows.length} road polylines to ${OUT}`);
+const written = await writeSqlChunks(OUT, rows, toSql, ROWS_PER_FILE);
+console.log(`Wrote ${rows.length} road polylines to ${written.length} file(s):`);
+for (const path of written) console.log(`  ${path}`);
 console.log('Next: run supabase/schema.sql once (for the roads table), then paste this file in the SQL editor.');

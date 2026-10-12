@@ -106,7 +106,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 https://api.vworld.kr/req/wfs?service=WFS&version=1.1.0&request=DescribeFeatureType&typename=lt_c_spbd&key=발급받은키
 ```
 
-**참고.** 가져오기는 범위가 1000개를 넘으면 자동으로 4등분해서 여러 번 요청하고, 중복을 제거해서 합칩니다. 그래도 SQL 파일이 커서 편집기에서 느릴 수 있으니, 그때는 `BBOX`를 좁혀서 나눠 실행하세요. 가져온 건물이 수천 개를 넘으면 렌더링 부담이 커지므로 `InstancedMesh` 전환을 검토하세요.
+**범위와 개수.** 기본 범위는 중구·종로 일대(약 6km × 5km)입니다. 가져오기는 요청 한도(1000개)를 넘으면 자동으로 4등분해서 여러 번 요청하고, 중복을 제거해서 합칩니다. 건물이 2000개를 넘으면 `supabase/seed-seoul-001.sql`, `-002.sql`처럼 나눠서 저장됩니다. 파일을 순서대로 하나씩 SQL 편집기에 실행하세요. 범위를 더 넓히려면 `BBOX`를 지정합니다. 건물이 많을수록 화면이 무거워지므로, 넓은 범위는 한 번에 올리기 전에 먼저 작은 범위로 확인하는 것을 권장합니다. 가져온 건물이 수천 개를 넘으면 렌더링 부담이 커지므로 `InstancedMesh` 전환을 검토하세요.
 
 ## 서울 도로 가져오기 (브이월드)
 

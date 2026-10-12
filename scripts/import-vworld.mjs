@@ -9,7 +9,7 @@
  *
  * Optional environment variables:
  *   VWORLD_DOMAIN   domain registered with the key, if the key requires one
- *   BBOX            "minLon,minLat,maxLon,maxLat" (default: City Hall area)
+ *   BBOX            "minLon,minLat,maxLon,maxLat" (default: Jung/Jongno, about 6 x 5 km)
  *   LAYER           WFS type name (default: lt_c_spbd, building polygons)
  *   FLOORS_FIELD    property holding above-ground floor count (default: gro_flo_co)
  *   FLOOR_HEIGHT    meters per floor used for the height estimate (default: 3.3)
@@ -22,14 +22,15 @@
  *   USAGE_FIELD     property holding the usage label (optional)
  *   MAX_FEATURES    per-request cap (default: 1000); the box is split automatically
  *   OUT             output path (default: supabase/seed-seoul.sql)
+ *   ROWS_PER_FILE   rows per SQL file; larger sets are split into -001, -002, ... (default: 2000)
  *
  * The property names above are defaults. Confirm them against the layer's
  * schema before a large import:
  *   https://api.vworld.kr/req/wfs?service=WFS&version=1.1.0&request=DescribeFeatureType&typename=lt_c_spbd&key=YOUR_KEY
  */
 
-import { writeFile } from 'node:fs/promises';
 import { fetchAllFeatures } from './lib/vworld-wfs.mjs';
+import { writeSqlChunks } from './lib/sql-chunks.mjs';
 
 const env = process.env;
 const apiKey = env.VWORLD_API_KEY;
@@ -38,7 +39,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const bbox = (env.BBOX ?? '126.970,37.560,126.990,37.572').split(',').map(Number);
+const bbox = (env.BBOX ?? '126.945,37.545,127.015,37.590').split(',').map(Number);
 if (bbox.length !== 4 || bbox.some(Number.isNaN)) {
   console.error('BBOX must be "minLon,minLat,maxLon,maxLat".');
   process.exit(1);
@@ -57,6 +58,7 @@ const NAME_FIELD = env.NAME_FIELD ?? 'buld_nm';
 const USAGE_FIELD = env.USAGE_FIELD;
 const MAX_FEATURES = Number(env.MAX_FEATURES ?? 1000);
 const OUT = env.OUT ?? 'supabase/seed-seoul.sql';
+const ROWS_PER_FILE = Number(env.ROWS_PER_FILE ?? 2000);
 const DEFAULT_HEIGHT = 10;
 
 // Local meter frame centered on Seoul City Hall, matching the viewer's coordinates.
@@ -183,6 +185,7 @@ if (defaulted === rows.length) {
   console.log(`${defaulted} of ${rows.length} buildings have no floor count and use the default height.`);
 }
 
-await writeFile(OUT, toSql(rows), 'utf8');
-console.log(`Wrote ${rows.length} buildings to ${OUT}`);
+const written = await writeSqlChunks(OUT, rows, toSql, ROWS_PER_FILE);
+console.log(`Wrote ${rows.length} buildings to ${written.length} file(s):`);
+for (const path of written) console.log(`  ${path}`);
 console.log('Next: paste the file into the Supabase SQL editor and run it.');
