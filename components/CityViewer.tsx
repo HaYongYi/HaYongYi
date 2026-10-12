@@ -108,14 +108,46 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
   return geometry;
 }
 
+type LayerKey = 'buildings' | 'roads' | 'basement';
+type LayerState = Record<LayerKey, boolean>;
+
+const DEFAULT_LAYERS: LayerState = { buildings: true, roads: true, basement: false };
+
+const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
+  { key: 'buildings', label: '건물', swatch: '#b8bfc8' },
+  { key: 'roads', label: '도로', swatch: ROAD_COLOR },
+  { key: 'basement', label: '지하', swatch: BASEMENT_COLOR },
+];
+
+/** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
+interface CityView {
+  ground: THREE.Mesh;
+  basement: THREE.Group;
+  buildings: BuildingMesh[];
+  roads: THREE.Mesh;
+}
+
+/**
+ * Applies layer visibility. With the basement layer on, ground and buildings turn
+ * translucent so underground volumes show through.
+ */
+function applyLayers(view: CityView, layers: LayerState) {
+  view.roads.visible = layers.roads;
+  view.basement.visible = layers.basement;
+  for (const mesh of view.buildings) {
+    mesh.visible = layers.buildings;
+    setTranslucent(mesh.material, layers.basement, BUILDING_OPACITY_WITH_BASEMENT);
+  }
+  setTranslucent(view.ground.material as THREE.MeshStandardMaterial, layers.basement, GROUND_OPACITY_WITH_BASEMENT);
+}
+
 export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Building | null>(null);
-  const [showBasement, setShowBasement] = useState(false);
-  // Read by the scene effect so a rebuild keeps the current toggle state
-  const showBasementRef = useRef(false);
-  // Handles the toggle needs after the scene is built
-  const viewRef = useRef<{ ground: THREE.Mesh; basement: THREE.Group; buildings: BuildingMesh[] } | null>(null);
+  const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYERS);
+  // Read by the scene effect so a rebuild keeps the current layer state
+  const layersRef = useRef<LayerState>(DEFAULT_LAYERS);
+  const viewRef = useRef<CityView | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -208,7 +240,6 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
 
     // Underground volumes sit below ground; hidden until the toggle is on
     const basement = new THREE.Group();
-    basement.visible = showBasementRef.current;
     scene.add(basement);
     const basementMaterial = new THREE.MeshStandardMaterial({
       color: BASEMENT_COLOR,
@@ -224,10 +255,8 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       basementGeometries.push(geometry);
       basement.add(new THREE.Mesh(geometry, basementMaterial));
     }
-    const on = showBasementRef.current;
-    setTranslucent(ground.material as THREE.MeshStandardMaterial, on, GROUND_OPACITY_WITH_BASEMENT);
-    for (const mesh of meshes) setTranslucent(mesh.material, on, BUILDING_OPACITY_WITH_BASEMENT);
-    viewRef.current = { ground, basement, buildings: meshes };
+    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh };
+    applyLayers(viewRef.current, layersRef.current);
 
     // Hover and selection highlighting
     let hovered: BuildingMesh | null = null;
@@ -254,7 +283,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
-      const hit = raycaster.intersectObjects(meshes, false)[0];
+      const hit = raycaster.intersectObjects(meshes.filter((mesh) => mesh.visible), false)[0];
       return hit ? (hit.object as BuildingMesh) : null;
     };
 
@@ -348,27 +377,34 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   }, [buildings, roads]);
 
   useEffect(() => {
-    showBasementRef.current = showBasement;
-    const view = viewRef.current;
-    if (!view) return;
-    view.basement.visible = showBasement;
-    setTranslucent(view.ground.material as THREE.MeshStandardMaterial, showBasement, GROUND_OPACITY_WITH_BASEMENT);
-    for (const mesh of view.buildings) {
-      setTranslucent(mesh.material, showBasement, BUILDING_OPACITY_WITH_BASEMENT);
-    }
-  }, [showBasement]);
+    layersRef.current = layers;
+    if (viewRef.current) applyLayers(viewRef.current, layers);
+  }, [layers]);
+
+  const counts: Record<LayerKey, number> = {
+    buildings: buildings.length,
+    roads: roads.length,
+    basement: buildings.filter((b) => b.basementDepth).length,
+  };
 
   return (
     <div className="viewer">
       <div ref={containerRef} className="viewer-canvas" />
-      <button
-        type="button"
-        className="toggle"
-        aria-pressed={showBasement}
-        onClick={() => setShowBasement((value) => !value)}
-      >
-        {showBasement ? '지하 숨기기' : '지하 보기'}
-      </button>
+      <fieldset className="legend">
+        <legend>레이어</legend>
+        {LAYER_OPTIONS.map((option) => (
+          <label key={option.key} className="legend-item">
+            <input
+              type="checkbox"
+              checked={layers[option.key]}
+              onChange={() => setLayers((prev) => ({ ...prev, [option.key]: !prev[option.key] }))}
+            />
+            <span className="swatch" style={{ background: option.swatch }} aria-hidden="true" />
+            <span>{option.label}</span>
+            <span className="count">{counts[option.key].toLocaleString()}</span>
+          </label>
+        ))}
+      </fieldset>
       {selected && (
         <aside className="info-panel" aria-live="polite">
           <header>

@@ -14,6 +14,8 @@
  *   FLOORS_FIELD    property holding above-ground floor count (default: gro_flo_co)
  *   FLOOR_HEIGHT    meters per floor used for the height estimate (default: 3.3)
  *   BASEMENT_FIELD  property holding below-ground floor count (default: und_flo_co)
+ *   NAME_BASEMENT_FLOORS  assumed basement floors when the name contains 지하 but the
+ *                   floor count is empty (default: 1)
  *   HEIGHT_FIELD    optional property holding height in meters, takes precedence if set
  *   ID_FIELD        property used as a stable id (default: bd_mgt_sn)
  *   NAME_FIELD      property holding the building name (default: buld_nm)
@@ -49,6 +51,7 @@ const HEIGHT_FIELD = env.HEIGHT_FIELD;
 const FLOORS_FIELD = env.FLOORS_FIELD ?? 'gro_flo_co';
 const BASEMENT_FIELD = env.BASEMENT_FIELD ?? 'und_flo_co';
 const FLOOR_HEIGHT = Number(env.FLOOR_HEIGHT ?? 3.3);
+const NAME_BASEMENT_FLOORS = Number(env.NAME_BASEMENT_FLOORS ?? 1);
 const ID_FIELD = env.ID_FIELD ?? 'bd_mgt_sn';
 const NAME_FIELD = env.NAME_FIELD ?? 'buld_nm';
 const USAGE_FIELD = env.USAGE_FIELD;
@@ -88,7 +91,12 @@ function toRows(feature, index) {
   const name = props[NAME_FIELD] || `Building ${rawId}`;
   const usage = (USAGE_FIELD && props[USAGE_FIELD]) || 'unknown';
   const basements = Number(props[BASEMENT_FIELD]);
-  const basementDepth = basements > 0 ? round(basements * FLOOR_HEIGHT) : 0;
+  // Names like "지하주차장" or "지하상가" mark underground space even without a floor count.
+  // 지하철 is excluded because it is a station name, not a building underground.
+  const namedUnderground = name.includes('지하') && !name.includes('지하철');
+  let basementDepth = 0;
+  if (basements > 0) basementDepth = round(basements * FLOOR_HEIGHT);
+  else if (namedUnderground) basementDepth = round(NAME_BASEMENT_FLOORS * FLOOR_HEIGHT);
 
   return outerRings(feature.geometry)
     .filter((ring) => ring && ring.length >= 4)
