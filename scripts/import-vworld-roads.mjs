@@ -10,7 +10,7 @@
  * Optional environment variables:
  *   VWORLD_DOMAIN   domain registered with the key, if the key requires one
  *   BBOX            "minLon,minLat,maxLon,maxLat" (default: City Hall area)
- *   MAX_FEATURES    upper bound per request (default: 1000)
+ *   MAX_FEATURES    per-request cap (default: 1000); the box is split automatically
  *   OUT             output path (default: supabase/seed-roads.sql)
  *
  * Layer: lt_l_n3a0020000 (도로 중심선). Attributes used:
@@ -19,6 +19,7 @@
  */
 
 import { writeFile } from 'node:fs/promises';
+import { fetchAllFeatures } from './lib/vworld-wfs.mjs';
 
 const LAYER = 'lt_l_n3a0020000';
 const ID_FIELD = 'ufid';
@@ -56,35 +57,6 @@ const project = ([lon, lat]) => [
   round(-(lat - ORIGIN_LAT) * METERS_PER_DEG_LAT),
 ];
 const sqlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
-
-async function fetchFeatures(bboxValue) {
-  const params = new URLSearchParams({
-    service: 'WFS',
-    version: '1.1.0',
-    request: 'GetFeature',
-    typename: LAYER,
-    srsName: 'EPSG:4326',
-    output: 'application/json',
-    bbox: bboxValue,
-    maxFeatures: String(MAX_FEATURES),
-    key: apiKey,
-  });
-  if (env.VWORLD_DOMAIN) params.set('domain', env.VWORLD_DOMAIN);
-
-  const response = await fetch(`https://api.vworld.kr/req/wfs?${params}`);
-  const text = await response.text();
-
-  // VWorld returns XML error documents, so parse and check the body, not only the status.
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(`Expected GeoJSON from VWorld but got:\n${text.slice(0, 400)}`);
-  }
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 400)}`);
-
-  return json.features ?? [];
-}
 
 /** Each feature can hold several polylines. Return one lon/lat array per polyline. */
 function polylines(geometry) {
@@ -136,22 +108,13 @@ function toSql(rows) {
   ].join('\n');
 }
 
-// EPSG:4326 is lat/lon axis order in WFS 1.1.0 per the OGC spec, but some servers
-// expect lon/lat. Try lon,lat first, then lat,lon if nothing comes back.
-const BBOX_LONLAT = `${minLon},${minLat},${maxLon},${maxLat},EPSG:4326`;
-const BBOX_LATLON = `${minLat},${minLon},${maxLat},${maxLon},EPSG:4326`;
-
-let features = await fetchFeatures(BBOX_LONLAT);
-if (features.length === 0) {
-  console.warn('0 features with lon,lat bbox order. Retrying with lat,lon order...');
-  features = await fetchFeatures(BBOX_LATLON);
-  if (features.length > 0) console.log('lat,lon order worked. Consider keeping it as the default.');
-}
-console.log(`Received ${features.length} features from ${LAYER}`);
-if (features.length >= MAX_FEATURES) {
-  console.warn(`Hit MAX_FEATURES=${MAX_FEATURES}. Narrow BBOX or raise MAX_FEATURES to get the rest.`);
-}
-
+const features = await fetchAllFeatures({
+  layer: LAYER,
+  bbox: [minLon, minLat, maxLon, maxLat],
+  apiKey,
+  domain: env.VWORLD_DOMAIN,
+  maxFeatures: MAX_FEATURES,
+});
 const rows = features.flatMap(toRows);
 if (rows.length === 0) {
   console.error('No road lines to write. Check BBOX and the layer name.');

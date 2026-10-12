@@ -5,7 +5,7 @@
  *
  * Run on your own machine (needs network access to api.vworld.kr):
  *
- *   VWORLD_API_KEY=your-key node scripts/import-vworld.mjs
+ *   VWORLD_API_KEY=your-key npm run import:seoul
  *
  * Optional environment variables:
  *   VWORLD_DOMAIN   domain registered with the key, if the key requires one
@@ -15,7 +15,7 @@
  *   ID_FIELD        property used as a stable id (default: bd_mgt_sn)
  *   NAME_FIELD      property holding the building name (default: buld_nm)
  *   USAGE_FIELD     property holding the usage label (optional)
- *   MAX_FEATURES    upper bound per request (default: 1000; VWorld rejects larger values for this key)
+ *   MAX_FEATURES    per-request cap (default: 1000); the box is split automatically
  *   OUT             output path (default: supabase/seed-seoul.sql)
  *
  * The property names above are defaults. Confirm them against the layer's
@@ -24,6 +24,7 @@
  */
 
 import { writeFile } from 'node:fs/promises';
+import { fetchAllFeatures } from './lib/vworld-wfs.mjs';
 
 const env = process.env;
 const apiKey = env.VWORLD_API_KEY;
@@ -32,10 +33,8 @@ if (!apiKey) {
   process.exit(1);
 }
 
-const [minLon, minLat, maxLon, maxLat] = (env.BBOX ?? '126.970,37.560,126.990,37.572')
-  .split(',')
-  .map(Number);
-if ([minLon, minLat, maxLon, maxLat].some(Number.isNaN)) {
+const bbox = (env.BBOX ?? '126.970,37.560,126.990,37.572').split(',').map(Number);
+if (bbox.length !== 4 || bbox.some(Number.isNaN)) {
   console.error('BBOX must be "minLon,minLat,maxLon,maxLat".');
   process.exit(1);
 }
@@ -50,98 +49,63 @@ const OUT = env.OUT ?? 'supabase/seed-seoul.sql';
 const DEFAULT_HEIGHT = 10;
 
 // Local meter frame centered on Seoul City Hall, matching the viewer's coordinates.
-// x = east, z = south.
 const ORIGIN_LON = 126.978;
 const ORIGIN_LAT = 37.5665;
 const METERS_PER_DEG_LAT = 110_540;
 const METERS_PER_DEG_LON = 111_320 * Math.cos((ORIGIN_LAT * Math.PI) / 180);
 
+const round = (value) => Math.round(value * 100) / 100;
 const project = ([lon, lat]) => [
   round((lon - ORIGIN_LON) * METERS_PER_DEG_LON),
   round(-(lat - ORIGIN_LAT) * METERS_PER_DEG_LAT),
 ];
+const sqlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
-function round(value) {
-  return Math.round(value * 100) / 100;
+/** Polygon rings to import. MultiPolygon features contribute every part, not only the first. */
+function outerRings(geometry) {
+  if (!geometry) return [];
+  if (geometry.type === 'Polygon') return [geometry.coordinates[0]];
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates.map((polygon) => polygon[0]);
+  return [];
 }
 
-function sqlString(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-/** Outer ring of a Polygon or the first polygon of a MultiPolygon, in lon/lat. */
-function outerRing(geometry) {
-  if (!geometry) return null;
-  if (geometry.type === 'Polygon') return geometry.coordinates[0];
-  if (geometry.type === 'MultiPolygon') return geometry.coordinates[0]?.[0] ?? null;
-  return null;
-}
-
-async function fetchFeatures(bboxValue) {
-  const params = new URLSearchParams({
-    service: 'WFS',
-    version: '1.1.0',
-    request: 'GetFeature',
-    typename: LAYER,
-    srsName: 'EPSG:4326',
-    output: 'application/json',
-    bbox: bboxValue,
-    maxFeatures: String(MAX_FEATURES),
-    key: apiKey,
-  });
-  if (env.VWORLD_DOMAIN) params.set('domain', env.VWORLD_DOMAIN);
-
-  const url = `https://api.vworld.kr/req/wfs?${params}`;
-  const response = await fetch(url);
-  const text = await response.text();
-
-  // VWorld returns XML error documents with HTTP 200, so check the body too.
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error(`Expected GeoJSON from VWorld but got:\n${text.slice(0, 400)}`);
-  }
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 400)}`);
-
-  return json.features ?? [];
-}
-
-function toRow(feature, index) {
+function toRows(feature, index) {
   const props = feature.properties ?? {};
-  const ring = outerRing(feature.geometry);
-  if (!ring || ring.length < 4) return null;
-
-  const footprint = ring.slice(0, -1).map(project); // drop the closing duplicate point
-  const xs = footprint.map(([x]) => x);
-  const zs = footprint.map(([, z]) => z);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minZ = Math.min(...zs);
-  const maxZ = Math.max(...zs);
-
+  const rawId = props[ID_FIELD] ?? feature.id ?? `row-${index}`;
   const rawHeight = Number(props[HEIGHT_FIELD]);
   const height = rawHeight > 0 ? round(rawHeight) : DEFAULT_HEIGHT;
-  const rawId = props[ID_FIELD] ?? feature.id ?? `row-${index}`;
+  const name = props[NAME_FIELD] || `Building ${rawId}`;
+  const usage = (USAGE_FIELD && props[USAGE_FIELD]) || 'unknown';
 
-  return {
-    id: `vw-${rawId}`,
-    name: props[NAME_FIELD] || `Building ${rawId}`,
-    usage: (USAGE_FIELD && props[USAGE_FIELD]) || 'unknown',
-    x: round((minX + maxX) / 2),
-    z: round((minZ + maxZ) / 2),
-    width: Math.max(round(maxX - minX), 0.5),
-    depth: Math.max(round(maxZ - minZ), 0.5),
-    height,
-    color: '#b8bfc8',
-    footprint,
-  };
+  return outerRings(feature.geometry)
+    .filter((ring) => ring && ring.length >= 4)
+    .map((ring, part, parts) => {
+      const footprint = ring.slice(0, -1).map(project); // drop the closing duplicate point
+      const xs = footprint.map(([x]) => x);
+      const zs = footprint.map(([, z]) => z);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minZ = Math.min(...zs);
+      const maxZ = Math.max(...zs);
+      return {
+        id: parts.length > 1 ? `vw-${rawId}-${part}` : `vw-${rawId}`,
+        name,
+        usage,
+        x: round((minX + maxX) / 2),
+        z: round((minZ + maxZ) / 2),
+        width: Math.max(round(maxX - minX), 0.5),
+        depth: Math.max(round(maxZ - minZ), 0.5),
+        height,
+        color: '#b8bfc8',
+        footprint,
+      };
+    });
 }
 
 function toSql(rows) {
   const header = [
-    '-- Generated by scripts/import-vworld.mjs from VWorld layer ' + LAYER,
-    `-- BBOX ${minLon},${minLat},${maxLon},${maxLat}; ${rows.length} buildings`,
+    `-- Generated by scripts/import-vworld.mjs from VWorld layer ${LAYER}`,
+    `-- BBOX ${bbox.join(',')}; ${rows.length} buildings`,
     '',
   ];
   const values = rows.map(
@@ -171,28 +135,27 @@ function toSql(rows) {
   ].join('\n');
 }
 
-// EPSG:4326 is lat/lon axis order in WFS 1.1.0 per the OGC spec, but some servers
-// expect lon/lat. Try lon,lat first, then lat,lon if nothing comes back.
-const BBOX_LONLAT = `${minLon},${minLat},${maxLon},${maxLat},EPSG:4326`;
-const BBOX_LATLON = `${minLat},${minLon},${maxLat},${maxLon},EPSG:4326`;
+const features = await fetchAllFeatures({
+  layer: LAYER,
+  bbox,
+  apiKey,
+  domain: env.VWORLD_DOMAIN,
+  maxFeatures: MAX_FEATURES,
+});
 
-let features = await fetchFeatures(BBOX_LONLAT);
-if (features.length === 0) {
-  console.warn('0 features with lon,lat bbox order. Retrying with lat,lon order...');
-  features = await fetchFeatures(BBOX_LATLON);
-  if (features.length > 0) console.log('lat,lon order worked. Consider keeping it as the default.');
-}
-console.log(`Received ${features.length} features from ${LAYER}`);
-if (features.length >= MAX_FEATURES) {
-  console.warn(`Hit MAX_FEATURES=${MAX_FEATURES}. Narrow BBOX or raise MAX_FEATURES to get the rest.`);
-}
-
-const rows = features.map(toRow).filter(Boolean);
-const skipped = features.length - rows.length;
+const perFeature = features.map(toRows);
+const rows = perFeature.flat();
+const skipped = perFeature.filter((parts) => parts.length === 0).length;
 if (skipped > 0) console.warn(`Skipped ${skipped} features without a usable polygon.`);
 if (rows.length === 0) {
   console.error('No buildings to write. Check BBOX and the layer name.');
   process.exit(1);
+}
+
+// Warn when heights look like the default, which usually means HEIGHT_FIELD is wrong.
+const defaulted = rows.filter((r) => r.height === DEFAULT_HEIGHT).length;
+if (defaulted === rows.length) {
+  console.warn(`Every building got the default height (${DEFAULT_HEIGHT}m). Check HEIGHT_FIELD="${HEIGHT_FIELD}".`);
 }
 
 await writeFile(OUT, toSql(rows), 'utf8');

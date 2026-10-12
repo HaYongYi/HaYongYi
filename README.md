@@ -104,7 +104,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 https://api.vworld.kr/req/wfs?service=WFS&version=1.1.0&request=DescribeFeatureType&typename=lt_c_spbd&key=발급받은키
 ```
 
-**참고.** 건물 수가 많으면 SQL 파일이 커서 편집기에서 느릴 수 있습니다. 이 경우 `BBOX`를 나눠서 여러 번 가져오세요. 가져온 건물이 수천 개를 넘으면 렌더링 부담이 커지므로 `InstancedMesh` 전환을 검토하세요.
+**참고.** 가져오기는 범위가 1000개를 넘으면 자동으로 4등분해서 여러 번 요청하고, 중복을 제거해서 합칩니다. 그래도 SQL 파일이 커서 편집기에서 느릴 수 있으니, 그때는 `BBOX`를 좁혀서 나눠 실행하세요. 가져온 건물이 수천 개를 넘으면 렌더링 부담이 커지므로 `InstancedMesh` 전환을 검토하세요.
 
 ## 서울 도로 가져오기 (브이월드)
 
