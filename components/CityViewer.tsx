@@ -54,17 +54,20 @@ function createPrism(b: Building, height: number): THREE.BufferGeometry {
   return geometry;
 }
 
-function computeBounds(buildings: Building[]): Bounds {
-  if (buildings.length === 0) {
-    return { minX: -250, maxX: 250, minZ: -250, maxZ: 250 };
-  }
+/** Bounds of all buildings and road centerlines, so the camera and ground cover both layers. */
+function computeBounds(buildings: Building[], roads: Road[]): Bounds {
   const bounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
-  for (const b of buildings) {
-    bounds.minX = Math.min(bounds.minX, b.x - b.width / 2);
-    bounds.maxX = Math.max(bounds.maxX, b.x + b.width / 2);
-    bounds.minZ = Math.min(bounds.minZ, b.z - b.depth / 2);
-    bounds.maxZ = Math.max(bounds.maxZ, b.z + b.depth / 2);
+  const include = (x: number, z: number, margin: number) => {
+    bounds.minX = Math.min(bounds.minX, x - margin);
+    bounds.maxX = Math.max(bounds.maxX, x + margin);
+    bounds.minZ = Math.min(bounds.minZ, z - margin);
+    bounds.maxZ = Math.max(bounds.maxZ, z + margin);
+  };
+  for (const b of buildings) include(b.x, b.z, Math.max(b.width, b.depth) / 2);
+  for (const road of roads) {
+    for (const [x, z] of road.points) include(x, z, (road.width || DEFAULT_ROAD_WIDTH) / 2);
   }
+  if (!Number.isFinite(bounds.minX)) return { minX: -250, maxX: 250, minZ: -250, maxZ: 250 };
   return bounds;
 }
 
@@ -153,7 +156,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
     const container = containerRef.current;
     if (!container) return;
 
-    const bounds = computeBounds(buildings);
+    const bounds = computeBounds(buildings, roads);
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerZ = (bounds.minZ + bounds.maxZ) / 2;
     const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ, 100);
