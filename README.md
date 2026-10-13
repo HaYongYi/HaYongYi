@@ -106,6 +106,20 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
 https://api.vworld.kr/req/wfs?service=WFS&version=1.1.0&request=DescribeFeatureType&typename=lt_c_spbd&key=발급받은키
 ```
 
+**SQL 편집기 없이 바로 올리기 (권장).** 가져오기 명령에 `UPLOAD=1`을 붙이면 파일을 만들지 않고 Supabase에 직접 저장합니다. 16개 파일을 붙여 넣을 필요가 없습니다.
+
+```powershell
+$env:NEXT_PUBLIC_SUPABASE_URL="https://프로젝트번호.supabase.co"
+$env:SUPABASE_SERVICE_ROLE_KEY="service_role키"
+$env:UPLOAD="1"
+npm run import:seoul
+npm run import:roads
+```
+
+- `service_role` 키는 Supabase 대시보드의 Project Settings → API에서 복사합니다. 모든 권한을 가진 키이므로 **PowerShell 환경변수에만** 넣고, `.env.local`이나 저장소에는 넣지 마세요. 브라우저로 보내면 안 됩니다.
+- 같은 `id`는 덮어쓰기 되므로 여러 번 실행해도 중복되지 않습니다.
+- `schema.sql`은 한 번 실행되어 있어야 합니다(표가 있어야 업로드할 수 있습니다).
+
 **범위와 개수.** 기본 범위는 중구·종로 일대(약 6km × 5km)입니다. 가져오기는 요청 한도(1000개)를 넘으면 자동으로 4등분해서 여러 번 요청하고, 중복을 제거해서 합칩니다. 건물이 2000개를 넘으면 `supabase/seed-seoul-001.sql`, `-002.sql`처럼 나눠서 저장됩니다. 파일을 순서대로 하나씩 SQL 편집기에 실행하세요. 범위를 더 넓히려면 `BBOX`를 지정합니다. 건물이 많을수록 화면이 무거워지므로, 넓은 범위는 한 번에 올리기 전에 먼저 작은 범위로 확인하는 것을 권장합니다. 가져온 건물이 수천 개를 넘으면 렌더링 부담이 커지므로 `InstancedMesh` 전환을 검토하세요.
 
 ## 서울 도로 가져오기 (브이월드)

@@ -12,6 +12,8 @@
  *   BBOX            "minLon,minLat,maxLon,maxLat" (default: Jung/Jongno, about 6 x 5 km)
  *   MAX_FEATURES    per-request cap (default: 1000); the box is split automatically
  *   OUT             output path (default: supabase/seed-roads.sql)
+ *   UPLOAD=1        upload straight to Supabase instead of writing SQL. Needs
+ *                   NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
  *   ROWS_PER_FILE   rows per SQL file; larger sets are split into -001, -002, ... (default: 2000)
  *
  * Layer: lt_l_n3a0020000 (도로 중심선). Attributes used:
@@ -21,6 +23,7 @@
 
 import { fetchAllFeatures } from './lib/vworld-wfs.mjs';
 import { writeSqlChunks } from './lib/sql-chunks.mjs';
+import { uploadRequested, upsertRows } from './lib/supabase-upload.mjs';
 
 const LAYER = 'lt_l_n3a0020000';
 const ID_FIELD = 'ufid';
@@ -123,7 +126,12 @@ if (rows.length === 0) {
   process.exit(1);
 }
 
-const written = await writeSqlChunks(OUT, rows, toSql, ROWS_PER_FILE);
-console.log(`Wrote ${rows.length} road polylines to ${written.length} file(s):`);
-for (const path of written) console.log(`  ${path}`);
+if (uploadRequested(env)) {
+  await upsertRows(env, 'roads', rows.map((r) => ({ id: r.id, name: r.name, width: r.width, points: r.points })));
+  console.log(`Uploaded ${rows.length} road polylines to Supabase.`);
+} else {
+  const written = await writeSqlChunks(OUT, rows, toSql, ROWS_PER_FILE);
+  console.log(`Wrote ${rows.length} road polylines to ${written.length} file(s):`);
+  for (const path of written) console.log(`  ${path}`);
+}
 console.log('Next: run supabase/schema.sql once (for the roads table), then paste this file in the SQL editor.');
