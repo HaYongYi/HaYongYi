@@ -19,7 +19,7 @@
  *   HEIGHT_FIELD    optional property holding height in meters, takes precedence if set
  *   ID_FIELD        property used as a stable id (default: bd_mgt_sn)
  *   NAME_FIELD      property holding the building name (default: buld_nm)
- *   USAGE_FIELD     property holding the usage label (optional)
+ *   USAGE_FIELD     property holding the building type code (default: buld_se_cd, 건물구분코드)
  *   MAX_FEATURES    per-request cap (default: 1000); the box is split automatically
  *   OUT             output path (default: supabase/seed-seoul.sql)
  *   UPLOAD=1        upload straight to Supabase instead of writing SQL. Needs
@@ -58,7 +58,7 @@ const FLOOR_HEIGHT = Number(env.FLOOR_HEIGHT ?? 3.3);
 const NAME_BASEMENT_FLOORS = Number(env.NAME_BASEMENT_FLOORS ?? 1);
 const ID_FIELD = env.ID_FIELD ?? 'bd_mgt_sn';
 const NAME_FIELD = env.NAME_FIELD ?? 'buld_nm';
-const USAGE_FIELD = env.USAGE_FIELD;
+const USAGE_FIELD = env.USAGE_FIELD ?? 'buld_se_cd';
 const MAX_FEATURES = Number(env.MAX_FEATURES ?? 1000);
 const OUT = env.OUT ?? 'supabase/seed-seoul.sql';
 const ROWS_PER_FILE = Number(env.ROWS_PER_FILE ?? 2000);
