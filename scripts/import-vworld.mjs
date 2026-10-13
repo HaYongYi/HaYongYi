@@ -216,4 +216,4 @@ if (uploadRequested(env)) {
   console.log(`Wrote ${rows.length} buildings to ${written.length} file(s):`);
   for (const path of written) console.log(`  ${path}`);
 }
-console.log('Next: paste the file into the Supabase SQL editor and run it.');
+if (!uploadRequested(env)) console.log('Next: paste the file into the Supabase SQL editor and run it.');

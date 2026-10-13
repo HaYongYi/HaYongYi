@@ -136,4 +136,4 @@ if (uploadRequested(env)) {
   console.log(`Wrote ${rows.length} road polylines to ${written.length} file(s):`);
   for (const path of written) console.log(`  ${path}`);
 }
-console.log('Next: run supabase/schema.sql once (for the roads table), then paste this file in the SQL editor.');
+if (!uploadRequested(env)) console.log('Next: run supabase/schema.sql once (for the roads table), then paste this file in the SQL editor.');
