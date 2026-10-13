@@ -57,10 +57,18 @@ const METERS_PER_DEG_LAT = 110_540;
 const METERS_PER_DEG_LON = 111_320 * Math.cos((ORIGIN_LAT * Math.PI) / 180);
 
 const round = (value) => Math.round(value * 100) / 100;
-const project = ([lon, lat]) => [
+/**
+ * Returns [lon, lat]. Seoul is about lon 127, lat 37, so a pair with a small first value
+ * and a large second value has its axes swapped (some WFS responses follow EPSG:4326 lat/lon order).
+ */
+const toLonLat = ([a, b]) => (a < 60 && b > 100 ? [b, a] : [a, b]);
+const project = (coord) => {
+  const [lon, lat] = toLonLat(coord);
+  return [
   round((lon - ORIGIN_LON) * METERS_PER_DEG_LON),
   round(-(lat - ORIGIN_LAT) * METERS_PER_DEG_LAT),
-];
+  ];
+};
 const sqlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
 /** Each feature can hold several polylines. Return one lon/lat array per polyline. */
