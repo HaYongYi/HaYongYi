@@ -33,7 +33,7 @@
 
 import { fetchAllFeatures } from './lib/vworld-wfs.mjs';
 import { writeSqlChunks } from './lib/sql-chunks.mjs';
-import { uploadRequested, upsertRows } from './lib/supabase-upload.mjs';
+import { dedupeById, uploadRequested, upsertRows } from './lib/supabase-upload.mjs';
 
 const env = process.env;
 const apiKey = env.VWORLD_API_KEY;
@@ -87,7 +87,8 @@ function outerRings(geometry) {
 
 function toRows(feature, index) {
   const props = feature.properties ?? {};
-  const rawId = props[ID_FIELD] ?? feature.id ?? `row-${index}`;
+  // feature.id is unique per WFS layer. The building management number is not always unique.
+  const rawId = feature.id ?? props[ID_FIELD] ?? `row-${index}`;
   const floors = Number(props[FLOORS_FIELD]);
   const measured = HEIGHT_FIELD ? Number(props[HEIGHT_FIELD]) : NaN;
   let height = DEFAULT_HEIGHT;
@@ -189,7 +190,9 @@ const features = await fetchAllFeatures({
 });
 
 const perFeature = features.map(toRows);
-const rows = perFeature.flat();
+const deduped = dedupeById(perFeature.flat());
+const rows = deduped.rows;
+if (deduped.dropped > 0) console.warn(`Dropped ${deduped.dropped} duplicate building ids.`);
 const skipped = perFeature.filter((parts) => parts.length === 0).length;
 if (skipped > 0) console.warn(`Skipped ${skipped} features without a usable polygon.`);
 if (rows.length === 0) {

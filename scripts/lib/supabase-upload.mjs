@@ -4,6 +4,21 @@
  * Keep that key in your local environment only; never commit it or expose it to the browser.
  */
 
+/**
+ * Keeps the first row for each id. A single INSERT ... ON CONFLICT cannot touch the same
+ * id twice, so duplicates must go before writing. Returns the rows and how many were dropped.
+ */
+export function dedupeById(rows) {
+  const seen = new Set();
+  const unique = [];
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    unique.push(row);
+  }
+  return { rows: unique, dropped: rows.length - unique.length };
+}
+
 /** True when UPLOAD=1 is set. Throws early if the URL or service key is missing. */
 export function uploadRequested(env) {
   if (env.UPLOAD !== '1') return false;

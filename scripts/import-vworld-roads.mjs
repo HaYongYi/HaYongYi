@@ -23,7 +23,7 @@
 
 import { fetchAllFeatures } from './lib/vworld-wfs.mjs';
 import { writeSqlChunks } from './lib/sql-chunks.mjs';
-import { uploadRequested, upsertRows } from './lib/supabase-upload.mjs';
+import { dedupeById, uploadRequested, upsertRows } from './lib/supabase-upload.mjs';
 
 const LAYER = 'lt_l_n3a0020000';
 const ID_FIELD = 'ufid';
@@ -120,7 +120,9 @@ const features = await fetchAllFeatures({
   domain: env.VWORLD_DOMAIN,
   maxFeatures: MAX_FEATURES,
 });
-const rows = features.flatMap(toRows);
+const deduped = dedupeById(features.flatMap(toRows));
+const rows = deduped.rows;
+if (deduped.dropped > 0) console.warn(`Dropped ${deduped.dropped} duplicate road ids.`);
 if (rows.length === 0) {
   console.error('No road lines to write. Check BBOX and the layer name.');
   process.exit(1);
