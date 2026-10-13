@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Building, Road } from './types';
 import { createSampleCity, createSampleRoads } from './sample-city';
+import { DEFAULT_UNDERGROUND_DEPTH, isUndergroundName } from './underground';
 
 /** Row shape of the `buildings` table (snake_case, see supabase/schema.sql). */
 interface BuildingRow {
@@ -89,19 +90,25 @@ export async function loadCity(): Promise<LoadedCity> {
   }
 
   return {
-    buildings: buildingsResult.data.map((row) => ({
-      id: row.id,
-      name: row.name,
-      usage: row.usage,
-      x: row.x,
-      z: row.z,
-      width: row.width,
-      depth: row.depth,
-      height: row.height,
-      color: row.color,
-      footprint: row.footprint ?? undefined,
-      basementDepth: row.basement_depth > 0 ? row.basement_depth : undefined,
-    })),
+    buildings: buildingsResult.data.map((row) => {
+      const underground = isUndergroundName(row.name);
+      // Underground-by-name facilities without a floor count still get a basement volume
+      const basementDepth = row.basement_depth > 0 ? row.basement_depth : underground ? DEFAULT_UNDERGROUND_DEPTH : 0;
+      return {
+        id: row.id,
+        name: row.name,
+        usage: row.usage,
+        x: row.x,
+        z: row.z,
+        width: row.width,
+        depth: row.depth,
+        height: row.height,
+        color: row.color,
+        footprint: row.footprint ?? undefined,
+        basementDepth: basementDepth > 0 ? basementDepth : undefined,
+        underground,
+      };
+    }),
     roads: roadsResult.error
       ? []
       : roadsResult.data.map((row) => ({

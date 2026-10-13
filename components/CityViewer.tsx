@@ -230,7 +230,9 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
     scene.add(city);
 
     const meshes: BuildingMesh[] = [];
+    // Underground-only facilities are drawn in the basement layer, not above ground
     for (const b of buildings) {
+      if (b.underground) continue;
       const material = new THREE.MeshStandardMaterial({ color: b.color, roughness: 0.7, metalness: 0.05 });
       const mesh: BuildingMesh = new THREE.Mesh(createPrism(b, b.height), material);
       mesh.position.set(b.x, 0, b.z);
@@ -385,7 +387,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   }, [layers]);
 
   const counts: Record<LayerKey, number> = {
-    buildings: buildings.length,
+    buildings: buildings.filter((b) => !b.underground).length,
     roads: roads.length,
     basement: buildings.filter((b) => b.basementDepth).length,
   };

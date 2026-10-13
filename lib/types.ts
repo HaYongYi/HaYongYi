@@ -23,6 +23,8 @@ export interface Building {
   footprint?: [number, number][];
   /** Depth of the underground part below ground level, in meters (0 or undefined = none). */
   basementDepth?: number;
+  /** True for facilities that exist only underground; they are drawn in the underground layer only. */
+  underground?: boolean;
 }
 
 /**
