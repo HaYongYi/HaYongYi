@@ -139,6 +139,20 @@ npm run import:roads
 
 도로폭은 `rvwd` 속성을 쓰고, 값이 없으면 8m로 그립니다. 도로가 아직 없어도 건물은 정상적으로 표시됩니다.
 
+## 가져오기 설정 파일 (재부팅해도 유지)
+
+매번 PowerShell에 키를 입력하지 않도록, 가져오기 설정을 파일에 저장해 둘 수 있습니다.
+
+1. `.env.import.example`을 복사해서 `.env.import`로 만듭니다.
+2. `.env.import`에 키와 URL을 채웁니다.
+3. 이후에는 입력 없이 실행합니다.
+   ```powershell
+   npm run import:seoul
+   npm run import:roads
+   ```
+
+`.env.import`에는 `service_role` 키가 들어가므로 Git에서 제외되어 있습니다. 저장소에 올리거나 공유하지 마세요. 앱 화면은 `.env.local`을 읽으므로 따로 설정할 것이 없습니다.
+
 ## Vercel 배포
 
 1. 이 저장소를 Vercel에 Import 합니다. Framework는 Next.js로 자동 감지됩니다.

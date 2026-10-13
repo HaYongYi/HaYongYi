@@ -8,8 +8,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "import:seoul": "node scripts/import-vworld.mjs",
-    "import:roads": "node scripts/import-vworld-roads.mjs"
+    "import:seoul": "node --env-file-if-exists=.env.import scripts/import-vworld.mjs",
+    "import:roads": "node --env-file-if-exists=.env.import scripts/import-vworld-roads.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",
