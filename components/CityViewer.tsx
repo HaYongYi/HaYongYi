@@ -144,6 +144,7 @@ interface CityView {
   roads: THREE.Mesh;
   crowd: THREE.Group;
   areas: THREE.Group;
+  buildBasement: () => void;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -166,6 +167,8 @@ const FLY_DURATION = 600;
  * translucent so underground volumes show through.
  */
 function applyLayers(view: CityView, layers: LayerState, categories: CategoryState) {
+  // Underground volumes are built on first use, so startup does not pay for them
+  if (layers.basement) view.buildBasement();
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   view.crowd.visible = layers.crowd;
@@ -391,7 +394,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       meshes.push(mesh);
     }
 
-    // Underground volumes sit below ground; hidden until the toggle is on
+    // Underground volumes sit below ground. They are built the first time the layer turns on.
     const basement = new THREE.Group();
     scene.add(basement);
     const basementMaterial = new THREE.MeshStandardMaterial({
@@ -401,14 +404,19 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       depthWrite: false,
     });
     const basementGeometries: THREE.BufferGeometry[] = [];
-    for (const b of buildings) {
-      if (!b.basementDepth) continue;
-      const geometry = createPrism(b, b.basementDepth);
-      geometry.translate(0, -b.basementDepth, 0);
-      basementGeometries.push(geometry);
-      basement.add(new THREE.Mesh(geometry, basementMaterial));
-    }
-    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, areas, flyTo };
+    let basementBuilt = false;
+    const buildBasement = () => {
+      if (basementBuilt) return;
+      basementBuilt = true;
+      for (const b of buildings) {
+        if (!b.basementDepth) continue;
+        const geometry = createPrism(b, b.basementDepth);
+        geometry.translate(0, -b.basementDepth, 0);
+        basementGeometries.push(geometry);
+        basement.add(new THREE.Mesh(geometry, basementMaterial));
+      }
+    };
+    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, areas, buildBasement, flyTo };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
