@@ -233,7 +233,7 @@ function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain';
+type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'relief';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
