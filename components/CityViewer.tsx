@@ -5,11 +5,16 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Building, Road } from '@/lib/types';
 import { CATEGORY_ORDER, CATEGORY_SWATCH, categorize, categoryColor, type BuildingCategory } from '@/lib/building-category';
+import { CONGESTION_COLORS, CONGESTION_LEVELS, congestionColor, type AreaCongestion } from '@/lib/congestion';
 
 interface CityViewerProps {
   buildings: Building[];
   roads?: Road[];
+  congestion?: AreaCongestion[];
 }
+
+/** Radius of the crowd disc drawn for each area, in meters. */
+const CROWD_RADIUS = 350;
 
 /** Road surface sits just above the ground plane so it is not hidden by z-fighting. */
 const ROAD_Y = 0.03;
@@ -112,18 +117,19 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement';
+type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
 const DEFAULT_CATEGORIES: CategoryState = { 교통: true, 주거: true, 상업: true, 업무: true, 기타: true };
 
-const DEFAULT_LAYERS: LayerState = { buildings: true, roads: true, basement: false };
+const DEFAULT_LAYERS: LayerState = { buildings: true, roads: true, basement: false, crowd: false };
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'buildings', label: '건물', swatch: '#b8bfc8' },
   { key: 'roads', label: '도로', swatch: ROAD_COLOR },
   { key: 'basement', label: '지하', swatch: BASEMENT_COLOR },
+  { key: 'crowd', label: '실시간 인구', swatch: CONGESTION_COLORS['약간 붐빔'] },
 ];
 
 /** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
@@ -132,6 +138,7 @@ interface CityView {
   basement: THREE.Group;
   buildings: BuildingMesh[];
   roads: THREE.Mesh;
+  crowd: THREE.Group;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -156,6 +163,7 @@ const FLY_DURATION = 600;
 function applyLayers(view: CityView, layers: LayerState, categories: CategoryState) {
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
+  view.crowd.visible = layers.crowd;
   for (const mesh of view.buildings) {
     const category = mesh.userData.category as BuildingCategory;
     mesh.visible = layers.buildings && categories[category];
@@ -164,7 +172,7 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   setTranslucent(view.ground.material as THREE.MeshStandardMaterial, layers.basement, GROUND_OPACITY_WITH_BASEMENT);
 }
 
-export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
+export default function CityViewer({ buildings, roads = [], congestion = [] }: CityViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Building | null>(null);
   const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYERS);
@@ -291,6 +299,25 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
     roadMesh.receiveShadow = true;
     scene.add(roadMesh);
 
+    // Real-time crowd level per area, drawn as translucent discs on the ground
+    const crowd = new THREE.Group();
+    scene.add(crowd);
+    const crowdGeometry = new THREE.CircleGeometry(CROWD_RADIUS, 48);
+    crowdGeometry.rotateX(-Math.PI / 2);
+    const crowdMaterials: THREE.MeshBasicMaterial[] = [];
+    for (const area of congestion) {
+      const material = new THREE.MeshBasicMaterial({
+        color: congestionColor(area.level),
+        transparent: true,
+        opacity: 0.45,
+        depthWrite: false,
+      });
+      crowdMaterials.push(material);
+      const disc = new THREE.Mesh(crowdGeometry, material);
+      disc.position.set(area.x, 0.06, area.z);
+      crowd.add(disc);
+    }
+
     // Buildings: one mesh per building, geometry already in world meters
     const city = new THREE.Group();
     scene.add(city);
@@ -327,7 +354,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       basementGeometries.push(geometry);
       basement.add(new THREE.Mesh(geometry, basementMaterial));
     }
-    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, flyTo };
+    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, flyTo };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
@@ -445,6 +472,8 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       grid.dispose();
       roadGeometry.dispose();
       roadMaterial.dispose();
+      crowdGeometry.dispose();
+      for (const material of crowdMaterials) material.dispose();
       for (const geometry of basementGeometries) geometry.dispose();
       basementMaterial.dispose();
       viewRef.current = null;
@@ -453,7 +482,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       renderer.dispose();
       canvas.remove();
     };
-  }, [buildings, roads]);
+  }, [buildings, roads, congestion]);
 
   useEffect(() => {
     categoriesRef.current = categories;
@@ -470,6 +499,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
     buildings: aboveGround.length,
     roads: roads.length,
     basement: buildings.filter((b) => b.basementDepth).length,
+    crowd: congestion.length,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
   for (const b of aboveGround) categoryCounts[categorize(b)]++;
@@ -514,6 +544,15 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
                   <span className="label">{category}</span>
                   <span className="count">{categoryCounts[category].toLocaleString()}</span>
                 </label>
+              ))}
+            {option.key === 'crowd' &&
+              layers.crowd &&
+              CONGESTION_LEVELS.map((level) => (
+                <div key={level} className="legend-item legend-sub legend-level">
+                  <span aria-hidden="true" />
+                  <span className="swatch" style={{ background: congestionColor(level) }} aria-hidden="true" />
+                  <span className="label">{level}</span>
+                </div>
               ))}
           </div>
         ))}

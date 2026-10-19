@@ -238,3 +238,8 @@ body {
     margin: 0 12px 12px;
   }
 }
+
+.legend-level {
+  cursor: default;
+  padding: 2px 0;
+}
