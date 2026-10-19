@@ -6,7 +6,17 @@ import type { AreaCongestion } from './congestion';
  * Areas (권역) to show. Names must match Seoul's citydata area names exactly.
  * Add more names here; each one is one API call, cached for a few minutes.
  */
-export const CITY_AREAS = ['광화문·덕수궁'];
+export const CITY_AREAS = [
+  '광화문·덕수궁',
+  '명동 관광특구',
+  '종로·청계 관광특구',
+  '남대문시장',
+  '동대문 관광특구',
+  '서울역',
+  '창덕궁·종묘',
+  '북촌한옥마을',
+  '인사동·익선동',
+];
 
 const BASE_URL = 'http://openapi.seoul.go.kr:8088';
 const CACHE_MS = 2 * 60 * 1000;
