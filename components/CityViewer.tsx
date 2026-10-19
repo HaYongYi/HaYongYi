@@ -8,6 +8,7 @@ import { CATEGORY_ORDER, CATEGORY_SWATCH, categorize, categoryColor, type Buildi
 import { CONGESTION_COLORS, CONGESTION_LEVELS, congestionColor, type AreaCongestion } from '@/lib/congestion';
 import { areaColor, areaRegions } from '@/lib/area-cells';
 import { tilesCovering, type TerrainTile } from '@/lib/terrain-tiles';
+import { elevationAt, type ElevationGrid } from '@/lib/elevation';
 
 interface CityViewerProps {
   buildings: Building[];
@@ -88,7 +89,7 @@ function computeBounds(buildings: Building[], roads: Road[]): Bounds {
  * Turns road centerlines into one flat triangle strip mesh. Each segment becomes a
  * quad offset by half the road width on either side of the line.
  */
-function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
+function buildRoadGeometry(roads: Road[], elevation: ElevationGrid | null): THREE.BufferGeometry {
   const positions: number[] = [];
   const indices: number[] = [];
 
@@ -105,12 +106,14 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
       // Unit normal to the segment in the XZ plane, scaled to half the width
       const nx = (-dz / length) * half;
       const nz = (dx / length) * half;
+      // Each road corner sits on the ground at its own position
+      const lift = (x: number, z: number) => elevationAt(elevation, x, z) + ROAD_Y;
       const base = positions.length / 3;
       positions.push(
-        x0 + nx, ROAD_Y, z0 + nz,
-        x0 - nx, ROAD_Y, z0 - nz,
-        x1 + nx, ROAD_Y, z1 + nz,
-        x1 - nx, ROAD_Y, z1 - nz,
+        x0 + nx, lift(x0 + nx, z0 + nz), z0 + nz,
+        x0 - nx, lift(x0 - nx, z0 - nz), z0 - nz,
+        x1 + nx, lift(x1 + nx, z1 + nz), z1 + nz,
+        x1 - nx, lift(x1 - nx, z1 - nz), z1 - nz,
       );
       indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
     }
@@ -123,17 +126,83 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
   return geometry;
 }
 
-/** One base map tile as a flat textured quad, corners in the city meter frame. */
-function tileGeometry(tile: TerrainTile): THREE.BufferGeometry {
+/** One base map tile as a textured grid that follows the ground, corners in the city meter frame. */
+function tileGeometry(tile: TerrainTile, elevation: ElevationGrid | null): THREE.BufferGeometry {
+  const SEGMENTS = 12;
   const { west, east, north, south } = tile;
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (let j = 0; j <= SEGMENTS; j++) {
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const u = i / SEGMENTS;
+      const v = j / SEGMENTS; // v = 0 at the north edge
+      const x = west + (east - west) * u;
+      const z = north + (south - north) * v;
+      positions.push(x, elevationAt(elevation, x, z) + TERRAIN_Y, z);
+      // Image top is north, so the north edge takes texture v = 1
+      uvs.push(u, 1 - v);
+    }
+  }
+  for (let j = 0; j < SEGMENTS; j++) {
+    for (let i = 0; i < SEGMENTS; i++) {
+      const a = j * (SEGMENTS + 1) + i;
+      const b = a + 1;
+      const c = a + SEGMENTS + 1;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    'position',
-    new THREE.Float32BufferAttribute([west, TERRAIN_Y, north, east, TERRAIN_Y, north, west, TERRAIN_Y, south, east, TERRAIN_Y, south], 3),
-  );
-  // Image top is north, so the north edge takes v = 1
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 0, 0, 1, 0], 2));
-  geometry.setIndex([0, 2, 1, 1, 2, 3]);
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+/**
+ * A flat triangle split into a small grid, so the area tint follows hills instead of
+ * floating over them. Returns the vertex positions as a flat [x, y, z] list.
+ */
+function drapeTriangle(a: [number, number], b: [number, number], c: [number, number], elevation: ElevationGrid | null): number[] {
+  const N = 8;
+  const point = (i: number, j: number) => {
+    const x = a[0] + ((b[0] - a[0]) * i + (c[0] - a[0]) * j) / N;
+    const z = a[1] + ((b[1] - a[1]) * i + (c[1] - a[1]) * j) / N;
+    return [x, elevationAt(elevation, x, z) + AREA_Y, z];
+  };
+  const out: number[] = [];
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N - j; i++) {
+      out.push(...point(i, j), ...point(i + 1, j), ...point(i, j + 1));
+      if (i + j < N - 1) out.push(...point(i + 1, j), ...point(i + 1, j + 1), ...point(i, j + 1));
+    }
+  }
+  return out;
+}
+
+/** The DEM as one mesh: a vertex per grid cell at its real height. */
+function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  for (let r = 0; r < grid.nrows; r++) {
+    for (let c = 0; c < grid.ncols; c++) {
+      positions.push(grid.originX + c * grid.stepX, grid.heights[r * grid.ncols + c], grid.originZ + r * grid.stepZ);
+    }
+  }
+  for (let r = 0; r < grid.nrows - 1; r++) {
+    for (let c = 0; c < grid.ncols - 1; c++) {
+      const a = r * grid.ncols + c;
+      const b = a + 1;
+      const d = a + grid.ncols;
+      const e = d + 1;
+      indices.push(a, d, b, b, d, e);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
   return geometry;
 }
 
@@ -170,6 +239,7 @@ interface CityView {
   crowd: THREE.Group;
   areas: THREE.Group;
   terrain: THREE.Group;
+  relief: THREE.Mesh | null;
   buildBasement: () => void;
   buildTerrain: () => void;
   flyTo: (preset: ViewPreset) => void;
@@ -208,6 +278,7 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
     setTranslucent(mesh.material, layers.basement, BUILDING_OPACITY_WITH_BASEMENT);
   }
   setTranslucent(view.ground.material as THREE.MeshStandardMaterial, layers.basement, GROUND_OPACITY_WITH_BASEMENT);
+  if (view.relief) setTranslucent(view.relief.material as THREE.MeshStandardMaterial, layers.basement, GROUND_OPACITY_WITH_BASEMENT);
 }
 
 export default function CityViewer({ buildings, roads = [], congestion = [] }: CityViewerProps) {
@@ -219,12 +290,20 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
   // Read by the scene effect so a rebuild keeps the current layer state
   const layersRef = useRef<LayerState>(DEFAULT_LAYERS);
   const viewRef = useRef<CityView | null>(null);
+  // Height grid from the DEM. undefined while loading, null if the file is missing.
+  const [elevation, setElevation] = useState<ElevationGrid | null | undefined>(undefined);
+  useEffect(() => {
+    fetch('/terrain/seoul-dem.json')
+      .then((response) => (response.ok ? (response.json() as Promise<ElevationGrid>) : null))
+      .then(setElevation)
+      .catch(() => setElevation(null));
+  }, []);
   // Compass ring, rotated every frame so N points to true north on screen
   const compassRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || elevation === undefined) return;
 
     const bounds = computeBounds(buildings, roads);
     const centerX = (bounds.minX + bounds.maxX) / 2;
@@ -324,12 +403,23 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     ground.receiveShadow = true;
     scene.add(ground);
 
+    // Real ground heights, drawn over the flat plane. The plane stays underneath as the far field.
+    let relief: THREE.Mesh | null = null;
+    if (elevation) {
+      relief = new THREE.Mesh(
+        reliefGeometry(elevation),
+        new THREE.MeshStandardMaterial({ color: '#dfe4ea', roughness: 1 }),
+      );
+      relief.receiveShadow = true;
+      scene.add(relief);
+    }
+
     const grid = new THREE.GridHelper(groundSize, 40, '#b7c0cb', '#cfd6df');
     grid.position.set(centerX, 0, centerZ);
     scene.add(grid);
 
     // Roads: one merged mesh for all centerlines
-    const roadGeometry = buildRoadGeometry(roads);
+    const roadGeometry = buildRoadGeometry(roads, elevation ?? null);
     const roadMaterial = new THREE.MeshStandardMaterial({
       color: ROAD_COLOR,
       roughness: 1,
@@ -354,7 +444,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       });
       crowdMaterials.push(material);
       const disc = new THREE.Mesh(crowdGeometry, material);
-      disc.position.set(area.x, 0.06, area.z);
+      disc.position.set(area.x, elevationAt(elevation, area.x, area.z) + 0.06, area.z);
       crowd.add(disc);
     }
 
@@ -378,9 +468,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       // Regions are convex, so a fan from the first corner covers each one
       const positions: number[] = [];
       for (let i = 1; i < region.points.length - 1; i++) {
-        for (const [x, z] of [region.points[0], region.points[i], region.points[i + 1]]) {
-          positions.push(x, AREA_Y, z);
-        }
+        positions.push(...drapeTriangle(region.points[0], region.points[i], region.points[i + 1], elevation ?? null));
       }
       const fill = new THREE.BufferGeometry();
       fill.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -396,7 +484,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       areas.add(new THREE.Mesh(fill, fillMaterial));
 
       const outline = new THREE.BufferGeometry().setFromPoints(
-        region.points.map(([x, z]) => new THREE.Vector3(x, AREA_Y + 0.01, z)),
+        region.points.map(([x, z]) => new THREE.Vector3(x, elevationAt(elevation, x, z) + AREA_Y + 0.01, z)),
       );
       const outlineMaterial = new THREE.LineBasicMaterial({ color: region.color });
       areaGeometries.push(outline);
@@ -414,7 +502,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       if (b.underground) continue;
       const material = new THREE.MeshStandardMaterial({ color: categoryColor(b), roughness: 0.7, metalness: 0.05 });
       const mesh: BuildingMesh = new THREE.Mesh(createPrism(b, b.height), material);
-      mesh.position.set(b.x, 0, b.z);
+      mesh.position.set(b.x, elevationAt(elevation, b.x, b.z), b.z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.userData.building = b;
@@ -442,7 +530,10 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
         const geometry = createPrism(b, b.basementDepth);
         geometry.translate(0, -b.basementDepth, 0);
         basementGeometries.push(geometry);
-        basement.add(new THREE.Mesh(geometry, basementMaterial));
+        // Footprints are built around the origin, so move each volume to its building
+        const mesh = new THREE.Mesh(geometry, basementMaterial);
+        mesh.position.set(b.x, elevationAt(elevation, b.x, b.z), b.z);
+        basement.add(mesh);
       }
     };
     // Base map (지형도): VWorld tiles laid flat on the ground. Loaded the first time the layer turns on.
@@ -457,7 +548,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       terrainBuilt = true;
       const loader = new THREE.TextureLoader();
       for (const tile of tilesCovering(bounds)) {
-        const geometry = tileGeometry(tile);
+        const geometry = tileGeometry(tile, elevation ?? null);
         const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
         loader.load(
           `/api/vworld-tile/${tile.z}/${tile.y}/${tile.x}`,
@@ -476,7 +567,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       }
     };
 
-    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, areas, terrain, buildBasement, buildTerrain, flyTo };
+    viewRef.current = { ground, relief, basement, buildings: meshes, roads: roadMesh, crowd, areas, terrain, buildBasement, buildTerrain, flyTo };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
@@ -599,6 +690,10 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       }
       ground.geometry.dispose();
       (ground.material as THREE.Material).dispose();
+      if (relief) {
+        relief.geometry.dispose();
+        (relief.material as THREE.Material).dispose();
+      }
       grid.dispose();
       roadGeometry.dispose();
       roadMaterial.dispose();
@@ -617,7 +712,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       renderer.dispose();
       canvas.remove();
     };
-  }, [buildings, roads, congestion]);
+  }, [buildings, roads, congestion, elevation]);
 
   useEffect(() => {
     categoriesRef.current = categories;
