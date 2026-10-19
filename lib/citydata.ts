@@ -76,7 +76,10 @@ async function fetchArea(key: string, name: string): Promise<AreaCongestion | nu
 
   const live = unwrap(city.LIVE_PPLTN_STTS, 'LIVE_PPLTN_STTS')[0];
   const points = collectPoints(city);
-  if (!live || points.length === 0) return null;
+  if (!live || points.length === 0) {
+    console.warn(`[citydata] ${name} skipped: live=${Boolean(live)}, places=${points.length}`);
+    return null;
+  }
 
   const lon = points.reduce((sum, [x]) => sum + x, 0) / points.length;
   const lat = points.reduce((sum, [, y]) => sum + y, 0) / points.length;
