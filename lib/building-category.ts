@@ -13,6 +13,12 @@ export const CATEGORY_COLORS: Record<Exclude<BuildingCategory, '기타'>, string
   업무: '#8aa0b6',
 };
 
+/** Display order for the legend. */
+export const CATEGORY_ORDER: BuildingCategory[] = ['교통', '주거', '상업', '업무', '기타'];
+
+/** Swatch color per category, including 기타 (its own color on the map, a neutral gray in the legend). */
+export const CATEGORY_SWATCH: Record<BuildingCategory, string> = { ...CATEGORY_COLORS, 기타: '#b8bfc8' };
+
 /** First matching rule wins. Substring match on the building name. */
 const NAME_RULES: [Exclude<BuildingCategory, '기타'>, string[]][] = [
   ['교통', ['지하철역', '역사', '터미널', '버스', '정류장', '차고지']],

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Building, Road } from '@/lib/types';
-import { categoryColor } from '@/lib/building-category';
+import { CATEGORY_ORDER, CATEGORY_SWATCH, categorize, categoryColor, type BuildingCategory } from '@/lib/building-category';
 
 interface CityViewerProps {
   buildings: Building[];
@@ -114,6 +114,9 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
 
 type LayerKey = 'buildings' | 'roads' | 'basement';
 type LayerState = Record<LayerKey, boolean>;
+type CategoryState = Record<BuildingCategory, boolean>;
+
+const DEFAULT_CATEGORIES: CategoryState = { 교통: true, 주거: true, 상업: true, 업무: true, 기타: true };
 
 const DEFAULT_LAYERS: LayerState = { buildings: true, roads: true, basement: false };
 
@@ -135,11 +138,12 @@ interface CityView {
  * Applies layer visibility. With the basement layer on, ground and buildings turn
  * translucent so underground volumes show through.
  */
-function applyLayers(view: CityView, layers: LayerState) {
+function applyLayers(view: CityView, layers: LayerState, categories: CategoryState) {
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   for (const mesh of view.buildings) {
-    mesh.visible = layers.buildings;
+    const category = mesh.userData.category as BuildingCategory;
+    mesh.visible = layers.buildings && categories[category];
     setTranslucent(mesh.material, layers.basement, BUILDING_OPACITY_WITH_BASEMENT);
   }
   setTranslucent(view.ground.material as THREE.MeshStandardMaterial, layers.basement, GROUND_OPACITY_WITH_BASEMENT);
@@ -149,6 +153,8 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Building | null>(null);
   const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYERS);
+  const [categories, setCategories] = useState<CategoryState>(DEFAULT_CATEGORIES);
+  const categoriesRef = useRef<CategoryState>(DEFAULT_CATEGORIES);
   // Read by the scene effect so a rebuild keeps the current layer state
   const layersRef = useRef<LayerState>(DEFAULT_LAYERS);
   const viewRef = useRef<CityView | null>(null);
@@ -240,6 +246,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.userData.building = b;
+      mesh.userData.category = categorize(b);
       city.add(mesh);
       meshes.push(mesh);
     }
@@ -262,7 +269,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       basement.add(new THREE.Mesh(geometry, basementMaterial));
     }
     viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh };
-    applyLayers(viewRef.current, layersRef.current);
+    applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
     let hovered: BuildingMesh | null = null;
@@ -383,34 +390,61 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   }, [buildings, roads]);
 
   useEffect(() => {
+    categoriesRef.current = categories;
+    if (viewRef.current) applyLayers(viewRef.current, layersRef.current, categories);
+  }, [categories]);
+
+  useEffect(() => {
     layersRef.current = layers;
-    if (viewRef.current) applyLayers(viewRef.current, layers);
+    if (viewRef.current) applyLayers(viewRef.current, layers, categoriesRef.current);
   }, [layers]);
 
+  const aboveGround = buildings.filter((b) => !b.underground);
   const counts: Record<LayerKey, number> = {
-    buildings: buildings.filter((b) => !b.underground).length,
+    buildings: aboveGround.length,
     roads: roads.length,
     basement: buildings.filter((b) => b.basementDepth).length,
   };
+  const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
+  for (const b of aboveGround) categoryCounts[categorize(b)]++;
+
+  const toggleCategory = (category: BuildingCategory) =>
+    setCategories((prev) => ({ ...prev, [category]: !prev[category] }));
 
   return (
     <div className="viewer">
       <div ref={containerRef} className="viewer-canvas" />
-      <fieldset className="legend">
-        <legend>레이어</legend>
+      <div className="legend" role="group" aria-label="레이어">
+        <div className="legend-title">레이어</div>
         {LAYER_OPTIONS.map((option) => (
-          <label key={option.key} className="legend-item">
-            <input
-              type="checkbox"
-              checked={layers[option.key]}
-              onChange={() => setLayers((prev) => ({ ...prev, [option.key]: !prev[option.key] }))}
-            />
-            <span className="swatch" style={{ background: option.swatch }} aria-hidden="true" />
-            <span>{option.label}</span>
-            <span className="count">{counts[option.key].toLocaleString()}</span>
-          </label>
+          <div key={option.key}>
+            <label className="legend-item">
+              <input
+                type="checkbox"
+                checked={layers[option.key]}
+                onChange={() => setLayers((prev) => ({ ...prev, [option.key]: !prev[option.key] }))}
+              />
+              <span className="swatch" style={{ background: option.swatch }} aria-hidden="true" />
+              <span className="label">{option.label}</span>
+              <span className="count">{counts[option.key].toLocaleString()}</span>
+            </label>
+            {option.key === 'buildings' &&
+              CATEGORY_ORDER.map((category) => (
+                <label key={category} className="legend-item legend-sub">
+                  <input
+                    type="checkbox"
+                    checked={categories[category]}
+                    disabled={!layers.buildings}
+                    onChange={() => toggleCategory(category)}
+                  />
+                  <span className="swatch" style={{ background: CATEGORY_SWATCH[category] }} aria-hidden="true" />
+                  <span className="label">{category}</span>
+                  <span className="count">{categoryCounts[category].toLocaleString()}</span>
+                </label>
+              ))}
+          </div>
         ))}
-      </fieldset>
+      </div>
       {selected && (
         <aside className="info-panel" aria-live="polite">
           <header>
