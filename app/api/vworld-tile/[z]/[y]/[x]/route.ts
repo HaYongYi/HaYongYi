@@ -15,10 +15,18 @@ export async function GET(
   if (!key) return new Response('VWORLD_API_KEY is not set', { status: 500 });
 
   const domain = process.env.VWORLD_DOMAIN;
-  const upstream = await fetch(`https://api.vworld.kr/req/wmts/1.0.0/${key}/Base/${z}/${y}/${x}.png`, {
-    headers: domain ? { Referer: domain } : undefined,
-    cache: 'force-cache',
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`https://api.vworld.kr/req/wmts/1.0.0/${key}/Base/${z}/${y}/${x}.png`, {
+      headers: domain ? { Referer: domain } : undefined,
+      cache: 'force-cache',
+    });
+  } catch (error) {
+    // Report the reason in the response so the browser shows it; the key is not part of the message
+    const reason = error instanceof Error ? `${error.message}${error.cause ? `: ${String(error.cause)}` : ''}` : 'unknown';
+    console.error(`[terrain] fetch failed for ${z}/${y}/${x}: ${reason}`);
+    return new Response(`VWorld request failed: ${reason}`, { status: 502 });
+  }
   if (!upstream.ok) return new Response(`VWorld responded ${upstream.status}`, { status: 502 });
 
   return new Response(upstream.body, {
