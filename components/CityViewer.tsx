@@ -28,6 +28,8 @@ const DEFAULT_ROAD_WIDTH = 8;
 const AREA_Y = 0.04;
 /** Base map sits just above the ground and under the roads. */
 const TERRAIN_Y = 0.01;
+/** Satellite imagery sits a little above the base map so it wins if both are on. */
+const IMAGERY_Y = 0.015;
 const ROAD_COLOR = '#5d6571';
 const BASEMENT_COLOR = '#6f9bc2';
 const GROUND_OPACITY_WITH_BASEMENT = 0.2;
@@ -138,8 +140,11 @@ function buildRoadGeometry(roads: Road[], elevation: ElevationGrid | null): THRE
   return geometry;
 }
 
-/** One base map tile as a textured grid that follows the ground, corners in the city meter frame. */
-function tileGeometry(tile: TerrainTile, elevation: ElevationGrid | null): THREE.BufferGeometry {
+/** Map image layers served by the tile route. */
+type TileLayer = 'Base' | 'Satellite';
+
+/** One map tile as a textured grid that follows the ground, corners in the city meter frame. */
+function tileGeometry(tile: TerrainTile, elevation: ElevationGrid | null, lift: number): THREE.BufferGeometry {
   const SEGMENTS = 12;
   const { west, east, north, south } = tile;
   const positions: number[] = [];
@@ -151,7 +156,7 @@ function tileGeometry(tile: TerrainTile, elevation: ElevationGrid | null): THREE
       const v = j / SEGMENTS; // v = 0 at the north edge
       const x = west + (east - west) * u;
       const z = north + (south - north) * v;
-      positions.push(x, elevationAt(elevation, x, z) + TERRAIN_Y, z);
+      positions.push(x, elevationAt(elevation, x, z) + lift, z);
       // Image top is north, so the north edge takes texture v = 1
       uvs.push(u, 1 - v);
     }
@@ -233,7 +238,7 @@ function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'relief';
+type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'satellite' | 'relief';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
@@ -246,6 +251,7 @@ const DEFAULT_LAYERS: LayerState = {
   crowd: false,
   areas: false,
   terrain: false,
+  satellite: false,
   relief: true,
 };
 
@@ -256,6 +262,7 @@ const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'crowd', label: '실시간 인구', swatch: CONGESTION_COLORS['약간 붐빔'] },
   { key: 'areas', label: '권역', swatch: '#9aa7b6' },
   { key: 'terrain', label: '지형도', swatch: '#cfd8c4' },
+  { key: 'satellite', label: '위성사진', swatch: '#5b7a5a' },
   { key: 'relief', label: '지형(고저)', swatch: HIGH_RELIEF_COLOR },
 ];
 
@@ -268,9 +275,11 @@ interface CityView {
   crowd: THREE.Group;
   areas: THREE.Group;
   terrain: THREE.Group;
+  satellite: THREE.Group;
   relief: THREE.Mesh | null;
   buildBasement: () => void;
   buildTerrain: () => void;
+  buildSatellite: () => void;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -297,6 +306,8 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   if (layers.basement) view.buildBasement();
   if (layers.terrain) view.buildTerrain();
   view.terrain.visible = layers.terrain;
+  if (layers.satellite) view.buildSatellite();
+  view.satellite.visible = layers.satellite;
   if (view.relief) view.relief.visible = layers.relief;
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
@@ -570,38 +581,57 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
         basement.add(mesh);
       }
     };
-    // Base map (지형도): VWorld tiles laid flat on the ground. Loaded the first time the layer turns on.
-    const terrain = new THREE.Group();
-    scene.add(terrain);
-    const terrainGeometries: THREE.BufferGeometry[] = [];
-    const terrainMaterials: THREE.MeshBasicMaterial[] = [];
-    const terrainTextures: THREE.Texture[] = [];
-    let terrainBuilt = false;
-    const buildTerrain = () => {
-      if (terrainBuilt) return;
-      terrainBuilt = true;
+    // Map image layers (지형도, 위성사진): VWorld tiles draped on the ground. Each layer loads
+    // the first time its toggle turns on.
+    const imageryGeometries: THREE.BufferGeometry[] = [];
+    const imageryMaterials: THREE.MeshBasicMaterial[] = [];
+    const imageryTextures: THREE.Texture[] = [];
+    const builtLayers = new Set<TileLayer>();
+    const buildImagery = (layer: TileLayer, group: THREE.Group, lift: number) => {
+      if (builtLayers.has(layer)) return;
+      builtLayers.add(layer);
       const loader = new THREE.TextureLoader();
       for (const tile of tilesCovering(bounds)) {
-        const geometry = tileGeometry(tile, elevation ?? null);
+        const geometry = tileGeometry(tile, elevation ?? null, lift);
         const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
         loader.load(
-          `/api/vworld-tile/${tile.z}/${tile.y}/${tile.x}`,
+          `/api/vworld-tile/${tile.z}/${tile.y}/${tile.x}?layer=${layer}`,
           (texture) => {
             texture.colorSpace = THREE.SRGBColorSpace;
             material.map = texture;
             material.needsUpdate = true;
-            terrainTextures.push(texture);
+            imageryTextures.push(texture);
           },
           undefined,
-          () => console.warn(`[terrain] tile ${tile.z}/${tile.y}/${tile.x} failed`),
+          () => console.warn(`[${layer}] tile ${tile.z}/${tile.y}/${tile.x} failed`),
         );
-        terrainGeometries.push(geometry);
-        terrainMaterials.push(material);
-        terrain.add(new THREE.Mesh(geometry, material));
+        imageryGeometries.push(geometry);
+        imageryMaterials.push(material);
+        group.add(new THREE.Mesh(geometry, material));
       }
     };
+    const terrain = new THREE.Group();
+    scene.add(terrain);
+    const satellite = new THREE.Group();
+    scene.add(satellite);
+    const buildTerrain = () => buildImagery('Base', terrain, TERRAIN_Y);
+    const buildSatellite = () => buildImagery('Satellite', satellite, IMAGERY_Y);
 
-    viewRef.current = { ground, relief, basement, buildings: meshes, roads: roadMesh, crowd, areas, terrain, buildBasement, buildTerrain, flyTo };
+    viewRef.current = {
+      ground,
+      relief,
+      basement,
+      buildings: meshes,
+      roads: roadMesh,
+      crowd,
+      areas,
+      terrain,
+      satellite,
+      buildBasement,
+      buildTerrain,
+      buildSatellite,
+      flyTo,
+    };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
@@ -735,9 +765,9 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       for (const material of crowdMaterials) material.dispose();
       for (const geometry of areaGeometries) geometry.dispose();
       for (const material of areaMaterials) material.dispose();
-      for (const geometry of terrainGeometries) geometry.dispose();
-      for (const material of terrainMaterials) material.dispose();
-      for (const texture of terrainTextures) texture.dispose();
+      for (const geometry of imageryGeometries) geometry.dispose();
+      for (const material of imageryMaterials) material.dispose();
+      for (const texture of imageryTextures) texture.dispose();
       for (const geometry of basementGeometries) geometry.dispose();
       basementMaterial.dispose();
       viewRef.current = null;
@@ -766,6 +796,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     crowd: congestion.length,
     areas: congestion.length,
     terrain: tilesCovering(computeBounds(buildings, roads)).length,
+    satellite: tilesCovering(computeBounds(buildings, roads)).length,
     relief: elevation ? elevation.heights.length : 0,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
