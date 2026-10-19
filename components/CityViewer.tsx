@@ -132,7 +132,22 @@ interface CityView {
   basement: THREE.Group;
   buildings: BuildingMesh[];
   roads: THREE.Mesh;
+  flyTo: (preset: ViewPreset) => void;
 }
+
+export type ViewPreset = 'default' | 'top' | 'south' | 'north' | 'east' | 'west';
+
+const VIEW_PRESETS: { key: ViewPreset; label: string }[] = [
+  { key: 'default', label: '기본' },
+  { key: 'top', label: '탑뷰' },
+  { key: 'south', label: '정면(남)' },
+  { key: 'north', label: '배면(북)' },
+  { key: 'east', label: '동측 입면' },
+  { key: 'west', label: '서측 입면' },
+];
+
+/** Camera transition length in milliseconds. */
+const FLY_DURATION = 600;
 
 /**
  * Applies layer visibility. With the basement layer on, ground and buildings turn
@@ -187,7 +202,51 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
     controls.enableDamping = true;
     controls.target.set(centerX, 0, centerZ);
     controls.maxPolarAngle = Math.PI * 0.49;
+    // Keep the model in reach: no zooming into the ground or far out past the city
+    controls.minDistance = span * 0.05;
+    controls.maxDistance = span * 2.5;
     controls.update();
+
+    // Reference camera poses. z grows toward the south, so "south" puts the camera at larger z.
+    const poseFor = (preset: ViewPreset): { position: THREE.Vector3; target: THREE.Vector3 } => {
+      const target = new THREE.Vector3(centerX, 0, centerZ);
+      const d = span * 0.9;
+      switch (preset) {
+        case 'top':
+          return { position: new THREE.Vector3(centerX, span * 1.2, centerZ + span * 0.001), target };
+        case 'south':
+          return { position: new THREE.Vector3(centerX, span * 0.35, centerZ + d), target };
+        case 'north':
+          return { position: new THREE.Vector3(centerX, span * 0.35, centerZ - d), target };
+        case 'east':
+          return { position: new THREE.Vector3(centerX + d, span * 0.35, centerZ), target };
+        case 'west':
+          return { position: new THREE.Vector3(centerX - d, span * 0.35, centerZ), target };
+        default:
+          return {
+            position: new THREE.Vector3(centerX + span * 0.7, span * 0.6, centerZ + span * 0.9),
+            target,
+          };
+      }
+    };
+
+    const tween = {
+      active: false,
+      start: 0,
+      fromPos: new THREE.Vector3(),
+      fromTarget: new THREE.Vector3(),
+      toPos: new THREE.Vector3(),
+      toTarget: new THREE.Vector3(),
+    };
+    const flyTo = (preset: ViewPreset) => {
+      const pose = poseFor(preset);
+      tween.fromPos.copy(camera.position);
+      tween.fromTarget.copy(controls.target);
+      tween.toPos.copy(pose.position);
+      tween.toTarget.copy(pose.target);
+      tween.start = performance.now();
+      tween.active = true;
+    };
 
     // Lighting
     scene.add(new THREE.HemisphereLight('#ffffff', '#9aa5b1', 1.6));
@@ -268,7 +327,7 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
       basementGeometries.push(geometry);
       basement.add(new THREE.Mesh(geometry, basementMaterial));
     }
-    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh };
+    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, flyTo };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
@@ -357,6 +416,13 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
 
     // Render loop
     renderer.setAnimationLoop(() => {
+      if (tween.active) {
+        const t = Math.min((performance.now() - tween.start) / FLY_DURATION, 1);
+        const eased = 1 - Math.pow(1 - t, 3);
+        camera.position.lerpVectors(tween.fromPos, tween.toPos, eased);
+        controls.target.lerpVectors(tween.fromTarget, tween.toTarget, eased);
+        if (t >= 1) tween.active = false;
+      }
       controls.update();
       renderer.render(scene, camera);
     });
@@ -414,6 +480,13 @@ export default function CityViewer({ buildings, roads = [] }: CityViewerProps) {
   return (
     <div className="viewer">
       <div ref={containerRef} className="viewer-canvas" />
+      <div className="view-presets" role="group" aria-label="시점">
+        {VIEW_PRESETS.map((preset) => (
+          <button key={preset.key} type="button" onClick={() => viewRef.current?.flyTo(preset.key)}>
+            {preset.label}
+          </button>
+        ))}
+      </div>
       <div className="legend" role="group" aria-label="레이어">
         <div className="legend-title">레이어</div>
         {LAYER_OPTIONS.map((option) => (
