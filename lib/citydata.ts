@@ -1,6 +1,6 @@
 import 'server-only';
 import { lonLatToMeters } from './geo';
-import type { AreaCongestion } from './congestion';
+import { matchLevel, type AreaCongestion } from './congestion';
 
 /**
  * Areas (권역) to show. Names must match Seoul's citydata area names exactly.
@@ -80,6 +80,9 @@ async function fetchArea(key: string, name: string): Promise<AreaCongestion | nu
     console.warn(`[citydata] ${name} skipped: live=${Boolean(live)}, places=${points.length}`);
     return null;
   }
+
+  const level = String(live.AREA_CONGEST_LVL ?? '');
+  if (!matchLevel(level)) console.warn(`[citydata] ${name} unknown congestion level: "${level}"`);
 
   const lon = points.reduce((sum, [x]) => sum + x, 0) / points.length;
   const lat = points.reduce((sum, [, y]) => sum + y, 0) / points.length;

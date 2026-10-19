@@ -26,6 +26,18 @@ export const CONGESTION_COLORS: Record<(typeof CONGESTION_LEVELS)[number], strin
 
 const UNKNOWN_COLOR = '#b0b8c4';
 
+/** Matching ignores spaces, so "약간붐빔" and "약간 붐빔" are the same level. */
+function normalizeLevel(level: string): string {
+  return level.replace(/\s+/g, '');
+}
+
+/** The level as Seoul spells it, or null when it is not one of CONGESTION_LEVELS. */
+export function matchLevel(level: string): (typeof CONGESTION_LEVELS)[number] | null {
+  const key = normalizeLevel(level);
+  return CONGESTION_LEVELS.find((known) => normalizeLevel(known) === key) ?? null;
+}
+
 export function congestionColor(level: string): string {
-  return CONGESTION_COLORS[level as (typeof CONGESTION_LEVELS)[number]] ?? UNKNOWN_COLOR;
+  const matched = matchLevel(level);
+  return matched ? CONGESTION_COLORS[matched] : UNKNOWN_COLOR;
 }
