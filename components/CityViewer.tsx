@@ -126,7 +126,7 @@ type CategoryState = Record<BuildingCategory, boolean>;
 
 const DEFAULT_CATEGORIES: CategoryState = { 교통: true, 주거: true, 상업: true, 업무: true, 기타: true };
 
-const DEFAULT_LAYERS: LayerState = { buildings: true, roads: true, basement: false, crowd: false, areas: false };
+const DEFAULT_LAYERS: LayerState = { buildings: false, roads: true, basement: false, crowd: false, areas: false };
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'buildings', label: '건물', swatch: '#b8bfc8' },
