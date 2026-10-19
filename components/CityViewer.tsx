@@ -20,7 +20,9 @@ interface CityViewerProps {
 const CROWD_RADIUS = 350;
 
 /** Road surface sits just above the ground plane so it is not hidden by z-fighting. */
-const ROAD_Y = 0.03;
+const ROAD_Y = 0.3;
+/** Roads are cut into pieces this long (m) so each piece follows the ground. */
+const ROAD_PIECE_LENGTH = 10;
 const DEFAULT_ROAD_WIDTH = 8;
 /** Area tint sits between the roads and the crowd discs. */
 const AREA_Y = 0.04;
@@ -108,14 +110,24 @@ function buildRoadGeometry(roads: Road[], elevation: ElevationGrid | null): THRE
       const nz = (dx / length) * half;
       // Each road corner sits on the ground at its own position
       const lift = (x: number, z: number) => elevationAt(elevation, x, z) + ROAD_Y;
-      const base = positions.length / 3;
-      positions.push(
-        x0 + nx, lift(x0 + nx, z0 + nz), z0 + nz,
-        x0 - nx, lift(x0 - nx, z0 - nz), z0 - nz,
-        x1 + nx, lift(x1 + nx, z1 + nz), z1 + nz,
-        x1 - nx, lift(x1 - nx, z1 - nz), z1 - nz,
-      );
-      indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      // Split the segment into short pieces so the road follows hills instead of cutting through them
+      const pieces = Math.max(1, Math.ceil(length / ROAD_PIECE_LENGTH));
+      for (let k = 0; k < pieces; k++) {
+        const t0 = k / pieces;
+        const t1 = (k + 1) / pieces;
+        const ax = x0 + dx * t0;
+        const az = z0 + dz * t0;
+        const bx = x0 + dx * t1;
+        const bz = z0 + dz * t1;
+        const base = positions.length / 3;
+        positions.push(
+          ax + nx, lift(ax + nx, az + nz), az + nz,
+          ax - nx, lift(ax - nx, az - nz), az - nz,
+          bx + nx, lift(bx + nx, bz + nz), bz + nz,
+          bx - nx, lift(bx - nx, bz - nz), bz - nz,
+        );
+        indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      }
     }
   }
 
@@ -234,6 +246,7 @@ const DEFAULT_LAYERS: LayerState = {
   crowd: false,
   areas: false,
   terrain: false,
+  relief: true,
 };
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
@@ -243,6 +256,7 @@ const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'crowd', label: '실시간 인구', swatch: CONGESTION_COLORS['약간 붐빔'] },
   { key: 'areas', label: '권역', swatch: '#9aa7b6' },
   { key: 'terrain', label: '지형도', swatch: '#cfd8c4' },
+  { key: 'relief', label: '지형(고저)', swatch: HIGH_RELIEF_COLOR },
 ];
 
 /** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
@@ -283,6 +297,7 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   if (layers.basement) view.buildBasement();
   if (layers.terrain) view.buildTerrain();
   view.terrain.visible = layers.terrain;
+  if (view.relief) view.relief.visible = layers.relief;
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   view.crowd.visible = layers.crowd;
@@ -439,6 +454,10 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       color: ROAD_COLOR,
       roughness: 1,
       side: THREE.DoubleSide,
+      // Pull roads slightly toward the camera so they win against the ground where they touch
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
     const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
     roadMesh.receiveShadow = true;
@@ -747,6 +766,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     crowd: congestion.length,
     areas: congestion.length,
     terrain: tilesCovering(computeBounds(buildings, roads)).length,
+    relief: elevation ? elevation.heights.length : 0,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
   for (const b of aboveGround) categoryCounts[categorize(b)]++;
