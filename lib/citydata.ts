@@ -90,7 +90,7 @@ async function fetchArea(key: string, name: string): Promise<AreaCongestion | nu
 
   return {
     name,
-    level: String(live.AREA_CONGESTION_LVL ?? ''),
+    level,
     min: Number(live.AREA_PPLTN_MIN) || 0,
     max: Number(live.AREA_PPLTN_MAX) || 0,
     x,
