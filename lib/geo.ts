@@ -12,3 +12,8 @@ const round = (value: number) => Math.round(value * 100) / 100;
 export function lonLatToMeters(lon: number, lat: number): [number, number] {
   return [round((lon - ORIGIN_LON) * METERS_PER_DEG_LON), round(-(lat - ORIGIN_LAT) * METERS_PER_DEG_LAT)];
 }
+
+/** Inverse of lonLatToMeters. */
+export function metersToLonLat(x: number, z: number): [number, number] {
+  return [ORIGIN_LON + x / METERS_PER_DEG_LON, ORIGIN_LAT - z / METERS_PER_DEG_LAT];
+}

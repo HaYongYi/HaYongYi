@@ -7,6 +7,7 @@ import type { Building, Road } from '@/lib/types';
 import { CATEGORY_ORDER, CATEGORY_SWATCH, categorize, categoryColor, type BuildingCategory } from '@/lib/building-category';
 import { CONGESTION_COLORS, CONGESTION_LEVELS, congestionColor, type AreaCongestion } from '@/lib/congestion';
 import { areaColor, areaRegions } from '@/lib/area-cells';
+import { tilesCovering, type TerrainTile } from '@/lib/terrain-tiles';
 
 interface CityViewerProps {
   buildings: Building[];
@@ -22,6 +23,8 @@ const ROAD_Y = 0.03;
 const DEFAULT_ROAD_WIDTH = 8;
 /** Area tint sits between the roads and the crowd discs. */
 const AREA_Y = 0.04;
+/** Base map sits just above the ground and under the roads. */
+const TERRAIN_Y = 0.01;
 const ROAD_COLOR = '#5d6571';
 const BASEMENT_COLOR = '#6f9bc2';
 const GROUND_OPACITY_WITH_BASEMENT = 0.2;
@@ -120,13 +123,34 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas';
+/** One base map tile as a flat textured quad, corners in the city meter frame. */
+function tileGeometry(tile: TerrainTile): THREE.BufferGeometry {
+  const { west, east, north, south } = tile;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute([west, TERRAIN_Y, north, east, TERRAIN_Y, north, west, TERRAIN_Y, south, east, TERRAIN_Y, south], 3),
+  );
+  // Image top is north, so the north edge takes v = 1
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 0, 0, 1, 0], 2));
+  geometry.setIndex([0, 2, 1, 1, 2, 3]);
+  return geometry;
+}
+
+type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
 const DEFAULT_CATEGORIES: CategoryState = { 교통: true, 주거: true, 상업: true, 업무: true, 기타: true };
 
-const DEFAULT_LAYERS: LayerState = { buildings: false, roads: true, basement: false, crowd: false, areas: false };
+const DEFAULT_LAYERS: LayerState = {
+  buildings: false,
+  roads: true,
+  basement: false,
+  crowd: false,
+  areas: false,
+  terrain: false,
+};
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'buildings', label: '건물', swatch: '#b8bfc8' },
@@ -134,6 +158,7 @@ const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'basement', label: '지하', swatch: BASEMENT_COLOR },
   { key: 'crowd', label: '실시간 인구', swatch: CONGESTION_COLORS['약간 붐빔'] },
   { key: 'areas', label: '권역', swatch: '#9aa7b6' },
+  { key: 'terrain', label: '지형도', swatch: '#cfd8c4' },
 ];
 
 /** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
@@ -144,7 +169,9 @@ interface CityView {
   roads: THREE.Mesh;
   crowd: THREE.Group;
   areas: THREE.Group;
+  terrain: THREE.Group;
   buildBasement: () => void;
+  buildTerrain: () => void;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -169,6 +196,8 @@ const FLY_DURATION = 600;
 function applyLayers(view: CityView, layers: LayerState, categories: CategoryState) {
   // Underground volumes are built on first use, so startup does not pay for them
   if (layers.basement) view.buildBasement();
+  if (layers.terrain) view.buildTerrain();
+  view.terrain.visible = layers.terrain;
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   view.crowd.visible = layers.crowd;
@@ -416,7 +445,38 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
         basement.add(new THREE.Mesh(geometry, basementMaterial));
       }
     };
-    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, areas, buildBasement, flyTo };
+    // Base map (지형도): VWorld tiles laid flat on the ground. Loaded the first time the layer turns on.
+    const terrain = new THREE.Group();
+    scene.add(terrain);
+    const terrainGeometries: THREE.BufferGeometry[] = [];
+    const terrainMaterials: THREE.MeshBasicMaterial[] = [];
+    const terrainTextures: THREE.Texture[] = [];
+    let terrainBuilt = false;
+    const buildTerrain = () => {
+      if (terrainBuilt) return;
+      terrainBuilt = true;
+      const loader = new THREE.TextureLoader();
+      for (const tile of tilesCovering(bounds)) {
+        const geometry = tileGeometry(tile);
+        const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+        loader.load(
+          `/api/vworld-tile/${tile.z}/${tile.y}/${tile.x}`,
+          (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            material.map = texture;
+            material.needsUpdate = true;
+            terrainTextures.push(texture);
+          },
+          undefined,
+          () => console.warn(`[terrain] tile ${tile.z}/${tile.y}/${tile.x} failed`),
+        );
+        terrainGeometries.push(geometry);
+        terrainMaterials.push(material);
+        terrain.add(new THREE.Mesh(geometry, material));
+      }
+    };
+
+    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, areas, terrain, buildBasement, buildTerrain, flyTo };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
@@ -546,6 +606,9 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       for (const material of crowdMaterials) material.dispose();
       for (const geometry of areaGeometries) geometry.dispose();
       for (const material of areaMaterials) material.dispose();
+      for (const geometry of terrainGeometries) geometry.dispose();
+      for (const material of terrainMaterials) material.dispose();
+      for (const texture of terrainTextures) texture.dispose();
       for (const geometry of basementGeometries) geometry.dispose();
       basementMaterial.dispose();
       viewRef.current = null;
@@ -573,6 +636,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     basement: buildings.filter((b) => b.basementDepth).length,
     crowd: congestion.length,
     areas: congestion.length,
+    terrain: tilesCovering(computeBounds(buildings, roads)).length,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
   for (const b of aboveGround) categoryCounts[categorize(b)]++;
