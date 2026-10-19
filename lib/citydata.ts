@@ -57,8 +57,9 @@ async function fetchArea(key: string, name: string): Promise<AreaCongestion | nu
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
   const json = (await response.json()) as Json;
-  // The root may be an object or a one-item array, and CITYDATA may be wrapped the same way.
-  const city = unwrap(json['SeoulRtd.citydata'], 'CITYDATA')[0];
+  // Some responses wrap CITYDATA in SeoulRtd.citydata, others put it at the top level.
+  // Each may also be a one-item array.
+  const city = unwrap(json['SeoulRtd.citydata'] ?? json, 'CITYDATA')[0];
   if (!city || city.LIVE_PPLTN_STTS === undefined) {
     throw new Error(`unexpected response shape: ${JSON.stringify(json).slice(0, 300)}`);
   }
