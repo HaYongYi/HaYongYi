@@ -181,13 +181,27 @@ function drapeTriangle(a: [number, number], b: [number, number], c: [number, num
   return out;
 }
 
-/** The DEM as one mesh: a vertex per grid cell at its real height. */
+/** Relief colors: lowest ground is light green, highest is deep green. */
+const LOW_RELIEF_COLOR = '#e4f2b8';
+const HIGH_RELIEF_COLOR = '#2f7a3a';
+
+/** The DEM as one mesh: a vertex per grid cell at its real height, colored by that height. */
 function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
   const positions: number[] = [];
+  const colors: number[] = [];
   const indices: number[] = [];
+  const minHeight = grid.heights.reduce((min, h) => Math.min(min, h), Infinity);
+  const maxHeight = grid.heights.reduce((max, h) => Math.max(max, h), -Infinity);
+  const low = new THREE.Color(LOW_RELIEF_COLOR);
+  const high = new THREE.Color(HIGH_RELIEF_COLOR);
+  const color = new THREE.Color();
   for (let r = 0; r < grid.nrows; r++) {
     for (let c = 0; c < grid.ncols; c++) {
-      positions.push(grid.originX + c * grid.stepX, grid.heights[r * grid.ncols + c], grid.originZ + r * grid.stepZ);
+      const height = grid.heights[r * grid.ncols + c];
+      positions.push(grid.originX + c * grid.stepX, height, grid.originZ + r * grid.stepZ);
+      const t = maxHeight > minHeight ? (height - minHeight) / (maxHeight - minHeight) : 0;
+      color.copy(low).lerp(high, t);
+      colors.push(color.r, color.g, color.b);
     }
   }
   for (let r = 0; r < grid.nrows - 1; r++) {
@@ -408,7 +422,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     if (elevation) {
       relief = new THREE.Mesh(
         reliefGeometry(elevation),
-        new THREE.MeshStandardMaterial({ color: '#dfe4ea', roughness: 1 }),
+        new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }),
       );
       relief.receiveShadow = true;
       scene.add(relief);
