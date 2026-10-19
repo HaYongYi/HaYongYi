@@ -243,3 +243,63 @@ body {
   cursor: default;
   padding: 2px 0;
 }
+
+.compass {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
+.compass-ring {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--angle, 0deg));
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.compass-ring span {
+  position: absolute;
+  line-height: 1;
+  /* Counter-rotate so the letter reads upright while the ring turns */
+  transform-origin: center;
+}
+
+.compass-n {
+  top: 5px;
+  left: 50%;
+  translate: -50% 0;
+  rotate: calc(var(--angle, 0deg) * -1);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.compass-e {
+  right: 6px;
+  top: 50%;
+  translate: 0 -50%;
+  rotate: calc(var(--angle, 0deg) * -1);
+}
+
+.compass-s {
+  bottom: 5px;
+  left: 50%;
+  translate: -50% 0;
+  rotate: calc(var(--angle, 0deg) * -1);
+}
+
+.compass-w {
+  left: 6px;
+  top: 50%;
+  translate: 0 -50%;
+  rotate: calc(var(--angle, 0deg) * -1);
+}

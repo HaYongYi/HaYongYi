@@ -181,6 +181,8 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
   // Read by the scene effect so a rebuild keeps the current layer state
   const layersRef = useRef<LayerState>(DEFAULT_LAYERS);
   const viewRef = useRef<CityView | null>(null);
+  // Compass ring, rotated every frame so N points to true north on screen
+  const compassRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -451,6 +453,14 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
         if (t >= 1) tween.active = false;
       }
       controls.update();
+      // World north is -z. Express it in camera space to get its on-screen direction,
+      // then turn the compass ring by that angle (clockwise from screen up).
+      const north = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion.clone().invert());
+      if (compassRef.current) {
+        const degrees = (Math.atan2(north.x, north.y) * 180) / Math.PI;
+        // Only the ring turns; each letter counter-rotates in CSS so it stays upright
+        compassRef.current.style.setProperty('--angle', `${degrees}deg`);
+      }
       renderer.render(scene, camera);
     });
 
@@ -516,6 +526,14 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
             {preset.label}
           </button>
         ))}
+      </div>
+      <div className="compass" aria-hidden="true">
+        <div className="compass-ring" ref={compassRef}>
+          <span className="compass-n">N</span>
+          <span className="compass-e">E</span>
+          <span className="compass-s">S</span>
+          <span className="compass-w">W</span>
+        </div>
       </div>
       <div className="legend" role="group" aria-label="레이어">
         <div className="legend-title">레이어</div>
