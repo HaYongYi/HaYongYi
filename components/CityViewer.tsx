@@ -6,6 +6,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Building, Road } from '@/lib/types';
 import { CATEGORY_ORDER, CATEGORY_SWATCH, categorize, categoryColor, type BuildingCategory } from '@/lib/building-category';
 import { CONGESTION_COLORS, CONGESTION_LEVELS, congestionColor, type AreaCongestion } from '@/lib/congestion';
+import { areaColor, areaRegions } from '@/lib/area-cells';
 
 interface CityViewerProps {
   buildings: Building[];
@@ -19,6 +20,8 @@ const CROWD_RADIUS = 350;
 /** Road surface sits just above the ground plane so it is not hidden by z-fighting. */
 const ROAD_Y = 0.03;
 const DEFAULT_ROAD_WIDTH = 8;
+/** Area tint sits between the roads and the crowd discs. */
+const AREA_Y = 0.04;
 const ROAD_COLOR = '#5d6571';
 const BASEMENT_COLOR = '#6f9bc2';
 const GROUND_OPACITY_WITH_BASEMENT = 0.2;
@@ -117,19 +120,20 @@ function buildRoadGeometry(roads: Road[]): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd';
+type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
 const DEFAULT_CATEGORIES: CategoryState = { 교통: true, 주거: true, 상업: true, 업무: true, 기타: true };
 
-const DEFAULT_LAYERS: LayerState = { buildings: true, roads: true, basement: false, crowd: false };
+const DEFAULT_LAYERS: LayerState = { buildings: true, roads: true, basement: false, crowd: false, areas: false };
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'buildings', label: '건물', swatch: '#b8bfc8' },
   { key: 'roads', label: '도로', swatch: ROAD_COLOR },
   { key: 'basement', label: '지하', swatch: BASEMENT_COLOR },
   { key: 'crowd', label: '실시간 인구', swatch: CONGESTION_COLORS['약간 붐빔'] },
+  { key: 'areas', label: '권역', swatch: '#9aa7b6' },
 ];
 
 /** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
@@ -139,6 +143,7 @@ interface CityView {
   buildings: BuildingMesh[];
   roads: THREE.Mesh;
   crowd: THREE.Group;
+  areas: THREE.Group;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -164,6 +169,7 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   view.crowd.visible = layers.crowd;
+  view.areas.visible = layers.areas;
   for (const mesh of view.buildings) {
     const category = mesh.userData.category as BuildingCategory;
     mesh.visible = layers.buildings && categories[category];
@@ -320,6 +326,52 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       crowd.add(disc);
     }
 
+    // Areas (권역): each area's nearest-center region as a tinted cell with an outline
+    const areas = new THREE.Group();
+    scene.add(areas);
+    const areaGeometries: THREE.BufferGeometry[] = [];
+    const areaMaterials: THREE.Material[] = [];
+    // Cover the buildings and every area center, so no center falls outside the split
+    const areaRect = congestion.reduce(
+      (rect, area) => ({
+        minX: Math.min(rect.minX, area.x),
+        maxX: Math.max(rect.maxX, area.x),
+        minZ: Math.min(rect.minZ, area.z),
+        maxZ: Math.max(rect.maxZ, area.z),
+      }),
+      bounds,
+    );
+    for (const region of areaRegions(congestion, areaRect)) {
+      if (region.points.length < 3) continue;
+      // Regions are convex, so a fan from the first corner covers each one
+      const positions: number[] = [];
+      for (let i = 1; i < region.points.length - 1; i++) {
+        for (const [x, z] of [region.points[0], region.points[i], region.points[i + 1]]) {
+          positions.push(x, AREA_Y, z);
+        }
+      }
+      const fill = new THREE.BufferGeometry();
+      fill.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const fillMaterial = new THREE.MeshBasicMaterial({
+        color: region.color,
+        transparent: true,
+        opacity: 0.18,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      areaGeometries.push(fill);
+      areaMaterials.push(fillMaterial);
+      areas.add(new THREE.Mesh(fill, fillMaterial));
+
+      const outline = new THREE.BufferGeometry().setFromPoints(
+        region.points.map(([x, z]) => new THREE.Vector3(x, AREA_Y + 0.01, z)),
+      );
+      const outlineMaterial = new THREE.LineBasicMaterial({ color: region.color });
+      areaGeometries.push(outline);
+      areaMaterials.push(outlineMaterial);
+      areas.add(new THREE.LineLoop(outline, outlineMaterial));
+    }
+
     // Buildings: one mesh per building, geometry already in world meters
     const city = new THREE.Group();
     scene.add(city);
@@ -356,7 +408,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       basementGeometries.push(geometry);
       basement.add(new THREE.Mesh(geometry, basementMaterial));
     }
-    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, flyTo };
+    viewRef.current = { ground, basement, buildings: meshes, roads: roadMesh, crowd, areas, flyTo };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
 
     // Hover and selection highlighting
@@ -484,6 +536,8 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       roadMaterial.dispose();
       crowdGeometry.dispose();
       for (const material of crowdMaterials) material.dispose();
+      for (const geometry of areaGeometries) geometry.dispose();
+      for (const material of areaMaterials) material.dispose();
       for (const geometry of basementGeometries) geometry.dispose();
       basementMaterial.dispose();
       viewRef.current = null;
@@ -510,6 +564,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     roads: roads.length,
     basement: buildings.filter((b) => b.basementDepth).length,
     crowd: congestion.length,
+    areas: congestion.length,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
   for (const b of aboveGround) categoryCounts[categorize(b)]++;
@@ -562,6 +617,16 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
                   <span className="label">{category}</span>
                   <span className="count">{categoryCounts[category].toLocaleString()}</span>
                 </label>
+              ))}
+            {option.key === 'areas' &&
+              layers.areas &&
+              congestion.map((area, i) => (
+                <div key={area.name} className="legend-item legend-sub legend-level">
+                  <span aria-hidden="true" />
+                  <span className="swatch" style={{ background: areaColor(i) }} aria-hidden="true" />
+                  <span className="label">{area.name}</span>
+                  <span className="count">{area.level || '-'}</span>
+                </div>
               ))}
             {option.key === 'crowd' &&
               layers.crowd &&
