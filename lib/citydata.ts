@@ -57,11 +57,10 @@ async function fetchArea(key: string, name: string): Promise<AreaCongestion | nu
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
   const json = (await response.json()) as Json;
-  const root = json['SeoulRtd.citydata'] as Json | undefined;
-  const city = root?.CITYDATA as Json | undefined;
-  if (!city) {
-    const result = json.RESULT as Json | undefined;
-    throw new Error(`unexpected response: ${String(result?.MESSAGE ?? result?.['RESULT.MESSAGE'] ?? 'no CITYDATA')}`);
+  // The root may be an object or a one-item array, and CITYDATA may be wrapped the same way.
+  const city = unwrap(json['SeoulRtd.citydata'], 'CITYDATA')[0];
+  if (!city || city.LIVE_PPLTN_STTS === undefined) {
+    throw new Error(`unexpected response shape: ${JSON.stringify(json).slice(0, 300)}`);
   }
 
   const live = unwrap(city.LIVE_PPLTN_STTS, 'LIVE_PPLTN_STTS')[0];
