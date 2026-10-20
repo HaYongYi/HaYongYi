@@ -276,6 +276,7 @@ interface CityView {
   areas: THREE.Group;
   terrain: THREE.Group;
   satellite: THREE.Group;
+  renderer: THREE.WebGLRenderer;
   relief: THREE.Mesh | null;
   buildBasement: () => void;
   buildTerrain: () => void;
@@ -320,6 +321,8 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   }
   setTranslucent(view.ground.material as THREE.MeshStandardMaterial, layers.basement, GROUND_OPACITY_WITH_BASEMENT);
   if (view.relief) setTranslucent(view.relief.material as THREE.MeshStandardMaterial, layers.basement, GROUND_OPACITY_WITH_BASEMENT);
+  // Visibility changed, so the shadows need to be drawn again
+  view.renderer.shadowMap.needsUpdate = true;
 }
 
 export default function CityViewer({ buildings, roads = [], congestion = [] }: CityViewerProps) {
@@ -363,6 +366,8 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
+    // The sun does not move, so the shadow map is redrawn only when a layer changes, not every frame
+    renderer.shadowMap.autoUpdate = false;
     container.appendChild(renderer.domElement);
 
     // Camera controls
@@ -618,6 +623,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     const buildSatellite = () => buildImagery('Satellite', satellite, IMAGERY_Y);
 
     viewRef.current = {
+      renderer,
       ground,
       relief,
       basement,
