@@ -10,6 +10,7 @@ import { areaColor, areaRegions } from '@/lib/area-cells';
 import { tilesCovering, type TerrainTile } from '@/lib/terrain-tiles';
 import { elevationAt, type ElevationGrid } from '@/lib/elevation';
 import { floodScreening, type FloodClass } from '@/lib/flood-risk';
+import { submergedCells } from '@/lib/water-level';
 
 interface CityViewerProps {
   buildings: Building[];
@@ -36,6 +37,12 @@ const FLOOD_Y = 0.05;
 const FLOOD_COLORS: Record<FloodClass, string> = { primary: '#d7301f', low: '#8ecae6', dense: '#1d3f8a' };
 const FLOOD_LABELS: Record<FloodClass, string> = { primary: '1급 후보 (저지대+밀집)', low: '저지대', dense: '밀집' };
 const FLOOD_CLASSES: FloodClass[] = ['primary', 'low', 'dense'];
+/** Water surface sits above the other ground layers. */
+const WATER_Y = 0.08;
+const WATER_COLOR = '#2b7bb9';
+/** Water level slider range in meters. */
+const WATER_MAX = 50;
+const WATER_STEP = 0.5;
 const ROAD_COLOR = '#5d6571';
 const BASEMENT_COLOR = '#6f9bc2';
 const GROUND_OPACITY_WITH_BASEMENT = 0.2;
@@ -244,7 +251,7 @@ function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'satellite' | 'relief' | 'flood';
+type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'satellite' | 'relief' | 'flood' | 'water';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
@@ -260,6 +267,7 @@ const DEFAULT_LAYERS: LayerState = {
   satellite: false,
   relief: true,
   flood: false,
+  water: false,
 };
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
@@ -272,6 +280,7 @@ const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'satellite', label: '위성사진', swatch: '#5b7a5a' },
   { key: 'relief', label: '지형(고저)', swatch: HIGH_RELIEF_COLOR },
   { key: 'flood', label: '침수 선별', swatch: FLOOD_COLORS.primary },
+  { key: 'water', label: '수위 침수', swatch: WATER_COLOR },
 ];
 
 /** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
@@ -291,6 +300,8 @@ interface CityView {
   buildSatellite: () => void;
   flood: THREE.Group;
   buildFlood: () => void;
+  water: THREE.Mesh;
+  setWaterLevel: (level: number) => void;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -322,6 +333,7 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   if (view.relief) view.relief.visible = layers.relief;
   if (layers.flood) view.buildFlood();
   view.flood.visible = layers.flood;
+  view.water.visible = layers.water;
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   view.crowd.visible = layers.crowd;
@@ -346,6 +358,9 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
   // Read by the scene effect so a rebuild keeps the current layer state
   const layersRef = useRef<LayerState>(DEFAULT_LAYERS);
   const viewRef = useRef<CityView | null>(null);
+  // Water level in meters, set from the legend slider
+  const [waterLevel, setWaterLevelState] = useState(0);
+  const waterLevelRef = useRef(0);
   // Height grid from the DEM. undefined while loading, null if the file is missing.
   const [elevation, setElevation] = useState<ElevationGrid | null | undefined>(undefined);
   useEffect(() => {
@@ -359,6 +374,15 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     () => (elevation ? floodScreening(elevation, buildings, computeBounds(buildings, roads)) : []),
     [elevation, buildings, roads],
   );
+  const submergedCount = useMemo(
+    () => (elevation ? submergedCells(elevation, waterLevel, computeBounds(buildings, roads)).length : 0),
+    [elevation, waterLevel, buildings, roads],
+  );
+
+  useEffect(() => {
+    waterLevelRef.current = waterLevel;
+    viewRef.current?.setWaterLevel(waterLevel);
+  }, [waterLevel]);
   // Compass ring, rotated every frame so N points to true north on screen
   const compassRef = useRef<HTMLDivElement>(null);
 
@@ -686,8 +710,47 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       flood.add(new THREE.Mesh(geometry, material));
     };
 
+    // Water surface at the chosen level. Its geometry is rebuilt whenever the level changes.
+    const water = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({
+        color: WATER_COLOR,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    scene.add(water);
+    const setWaterLevel = (level: number) => {
+      const positions: number[] = [];
+      const indices: number[] = [];
+      if (elevation) {
+        const y = level + WATER_Y;
+        for (const index of submergedCells(elevation, level, bounds)) {
+          const row = Math.floor(index / elevation.ncols);
+          const col = index % elevation.ncols;
+          const x0 = elevation.originX + (col - 0.5) * elevation.stepX;
+          const x1 = elevation.originX + (col + 0.5) * elevation.stepX;
+          const z0 = elevation.originZ + (row - 0.5) * elevation.stepZ;
+          const z1 = elevation.originZ + (row + 0.5) * elevation.stepZ;
+          const base = positions.length / 3;
+          positions.push(x0, y, z0, x1, y, z0, x0, y, z1, x1, y, z1);
+          indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+        }
+      }
+      water.geometry.dispose();
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      water.geometry = geometry;
+    };
+    setWaterLevel(waterLevelRef.current);
+
     viewRef.current = {
       renderer,
+      water,
+      setWaterLevel,
       ground,
       relief,
       basement,
@@ -842,6 +905,8 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       for (const texture of imageryTextures) texture.dispose();
       floodParts.geometry?.dispose();
       floodParts.material?.dispose();
+      water.geometry.dispose();
+      (water.material as THREE.Material).dispose();
       for (const geometry of basementGeometries) geometry.dispose();
       basementMaterial.dispose();
       viewRef.current = null;
@@ -873,6 +938,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     satellite: tilesCovering(computeBounds(buildings, roads)).length,
     relief: elevation ? elevation.heights.length : 0,
     flood: floodCells.length,
+    water: submergedCount,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
   for (const b of aboveGround) categoryCounts[categorize(b)]++;
@@ -926,6 +992,22 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
                   <span className="count">{categoryCounts[category].toLocaleString()}</span>
                 </label>
               ))}
+            {option.key === 'water' && layers.water && (
+              <div className="legend-item legend-sub legend-level">
+                <span aria-hidden="true" />
+                <input
+                  type="range"
+                  min={0}
+                  max={WATER_MAX}
+                  step={WATER_STEP}
+                  value={waterLevel}
+                  onChange={(event) => setWaterLevelState(Number(event.target.value))}
+                  aria-label="수위 (m)"
+                  style={{ gridColumn: 'span 2', width: '100%' }}
+                />
+                <span className="count">{waterLevel.toFixed(1)} m</span>
+              </div>
+            )}
             {option.key === 'flood' &&
               layers.flood &&
               FLOOD_CLASSES.map((cls) => (
