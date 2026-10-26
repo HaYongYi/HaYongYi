@@ -303,3 +303,24 @@ body {
   translate: 0 -50%;
   rotate: calc(var(--angle, 0deg) * -1);
 }
+
+.route {
+  margin-top: 12px;
+}
+
+.route-button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.route-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}

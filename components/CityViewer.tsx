@@ -11,6 +11,8 @@ import { tilesCovering, type TerrainTile } from '@/lib/terrain-tiles';
 import { elevationAt, type ElevationGrid } from '@/lib/elevation';
 import { floodScreening, type FloodClass } from '@/lib/flood-risk';
 import { submergedCells } from '@/lib/water-level';
+import { findEvacuationRoute, type EvacuationRoute, type Shelter } from '@/lib/evacuation';
+import { lonLatToMeters } from '@/lib/geo';
 
 interface CityViewerProps {
   buildings: Building[];
@@ -251,7 +253,18 @@ function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'satellite' | 'relief' | 'flood' | 'water';
+type LayerKey =
+  | 'buildings'
+  | 'roads'
+  | 'basement'
+  | 'crowd'
+  | 'areas'
+  | 'terrain'
+  | 'satellite'
+  | 'relief'
+  | 'flood'
+  | 'water'
+  | 'shelter';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
@@ -268,6 +281,7 @@ const DEFAULT_LAYERS: LayerState = {
   relief: true,
   flood: false,
   water: false,
+  shelter: false,
 };
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
@@ -281,6 +295,7 @@ const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'relief', label: '지형(고저)', swatch: HIGH_RELIEF_COLOR },
   { key: 'flood', label: '침수 선별', swatch: FLOOD_COLORS.primary },
   { key: 'water', label: '수위 침수', swatch: WATER_COLOR },
+  { key: 'shelter', label: '대피소', swatch: '#e76f51' },
 ];
 
 /** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
@@ -302,6 +317,8 @@ interface CityView {
   buildFlood: () => void;
   water: THREE.Mesh;
   setWaterLevel: (level: number) => void;
+  shelterGroup: THREE.Group;
+  setRoute: (path: [number, number][] | null) => void;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -334,6 +351,7 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   if (layers.flood) view.buildFlood();
   view.flood.visible = layers.flood;
   view.water.visible = layers.water;
+  view.shelterGroup.visible = layers.shelter;
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   view.crowd.visible = layers.crowd;
@@ -361,6 +379,24 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
   // Water level in meters, set from the legend slider
   const [waterLevel, setWaterLevelState] = useState(0);
   const waterLevelRef = useRef(0);
+  // Shelters from public/terrain/shelters.json, as [{ name, lon, lat }]
+  const [shelters, setShelters] = useState<Shelter[]>([]);
+  // Route found from one building; shown only while that building is selected
+  const [route, setRoute] = useState<{ building: Building; result: EvacuationRoute } | null>(null);
+  const [routeMissing, setRouteMissing] = useState(false);
+  useEffect(() => {
+    fetch('/terrain/shelters.json')
+      .then((response) => (response.ok ? (response.json() as Promise<{ name: string; lon: number; lat: number }[]>) : []))
+      .then((list) =>
+        setShelters(
+          list.map((shelter) => {
+            const [x, z] = lonLatToMeters(shelter.lon, shelter.lat);
+            return { name: shelter.name, x, z };
+          }),
+        ),
+      )
+      .catch(() => setShelters([]));
+  }, []);
   // Height grid from the DEM. undefined while loading, null if the file is missing.
   const [elevation, setElevation] = useState<ElevationGrid | null | undefined>(undefined);
   useEffect(() => {
@@ -383,6 +419,18 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     waterLevelRef.current = waterLevel;
     viewRef.current?.setWaterLevel(waterLevel);
   }, [waterLevel]);
+
+  // The route belongs to the selected building only
+  const activeRoute = route && selected && route.building.id === selected.id ? route : null;
+  useEffect(() => {
+    viewRef.current?.setRoute(activeRoute?.result.path ?? null);
+  }, [activeRoute]);
+
+  const findRoute = (building: Building) => {
+    const result = findEvacuationRoute([building.x, building.z], shelters, roads, elevation ?? null, waterLevel);
+    setRoute(result ? { building, result } : null);
+    setRouteMissing(!result);
+  };
   // Compass ring, rotated every frame so N points to true north on screen
   const compassRef = useRef<HTMLDivElement>(null);
 
@@ -710,6 +758,35 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       flood.add(new THREE.Mesh(geometry, material));
     };
 
+    // Shelter markers and the evacuation route line. Both are replaced when their data changes.
+    const shelterGroup = new THREE.Group();
+    scene.add(shelterGroup);
+    const markerGeometry = new THREE.CylinderGeometry(6, 6, 18, 12);
+    const markerMaterial = new THREE.MeshStandardMaterial({ color: '#e76f51', roughness: 0.6 });
+    for (const shelter of shelters) {
+      const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+      marker.position.set(shelter.x, elevationAt(elevation, shelter.x, shelter.z) + 9, shelter.z);
+      marker.castShadow = true;
+      shelterGroup.add(marker);
+    }
+
+    const routeGroup = new THREE.Group();
+    scene.add(routeGroup);
+    let routeGeometry: THREE.BufferGeometry | null = null;
+    const routeMaterial = new THREE.LineBasicMaterial({ color: '#ff7a3d', depthTest: false });
+    const setRoute = (path: [number, number][] | null) => {
+      routeGroup.clear();
+      routeGeometry?.dispose();
+      routeGeometry = null;
+      if (!path || path.length < 2) return;
+      routeGeometry = new THREE.BufferGeometry().setFromPoints(
+        path.map(([x, z]) => new THREE.Vector3(x, elevationAt(elevation, x, z) + 1.5, z)),
+      );
+      const line = new THREE.Line(routeGeometry, routeMaterial);
+      line.renderOrder = 10;
+      routeGroup.add(line);
+    };
+
     // Water surface at the chosen level. Its geometry is rebuilt whenever the level changes.
     const water = new THREE.Mesh(
       new THREE.BufferGeometry(),
@@ -751,6 +828,8 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       renderer,
       water,
       setWaterLevel,
+      shelterGroup,
+      setRoute,
       ground,
       relief,
       basement,
@@ -907,6 +986,10 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       floodParts.material?.dispose();
       water.geometry.dispose();
       (water.material as THREE.Material).dispose();
+      markerGeometry.dispose();
+      markerMaterial.dispose();
+      routeGeometry?.dispose();
+      routeMaterial.dispose();
       for (const geometry of basementGeometries) geometry.dispose();
       basementMaterial.dispose();
       viewRef.current = null;
@@ -915,7 +998,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       renderer.dispose();
       canvas.remove();
     };
-  }, [buildings, roads, congestion, elevation, floodCells]);
+  }, [buildings, roads, congestion, elevation, floodCells, shelters]);
 
   useEffect(() => {
     categoriesRef.current = categories;
@@ -939,6 +1022,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     relief: elevation ? elevation.heights.length : 0,
     flood: floodCells.length,
     water: submergedCount,
+    shelter: shelters.length,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
   for (const b of aboveGround) categoryCounts[categorize(b)]++;
@@ -1062,6 +1146,20 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
               x {selected.x.toFixed(1)}, z {selected.z.toFixed(1)}
             </dd>
           </dl>
+          <div className="route">
+            <button type="button" className="route-button" onClick={() => findRoute(selected)}>
+              대피 경로 찾기 (수위 {waterLevel.toFixed(1)} m)
+            </button>
+            {shelters.length === 0 && <p className="route-note">대피소 데이터가 없습니다. public/terrain/shelters.json을 확인하세요.</p>}
+            {shelters.length > 0 && routeMissing && route === null && (
+              <p className="route-note">도달 가능한 대피소를 찾지 못했습니다. 물에 잠기지 않은 도로가 끊겨 있을 수 있습니다.</p>
+            )}
+            {activeRoute && (
+              <p className="route-note">
+                {activeRoute.result.shelter.name} · 약 {Math.round(activeRoute.result.length).toLocaleString()} m
+              </p>
+            )}
+          </div>
         </aside>
       )}
     </div>
