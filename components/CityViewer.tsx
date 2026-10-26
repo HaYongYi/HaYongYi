@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { Building, Road } from '@/lib/types';
@@ -9,6 +9,7 @@ import { CONGESTION_COLORS, CONGESTION_LEVELS, congestionColor, type AreaCongest
 import { areaColor, areaRegions } from '@/lib/area-cells';
 import { tilesCovering, type TerrainTile } from '@/lib/terrain-tiles';
 import { elevationAt, type ElevationGrid } from '@/lib/elevation';
+import { floodScreening, type FloodClass } from '@/lib/flood-risk';
 
 interface CityViewerProps {
   buildings: Building[];
@@ -30,6 +31,11 @@ const AREA_Y = 0.04;
 const TERRAIN_Y = 0.01;
 /** Satellite imagery sits a little above the base map so it wins if both are on. */
 const IMAGERY_Y = 0.015;
+/** Flood screening tint sits just above the imagery. */
+const FLOOD_Y = 0.05;
+const FLOOD_COLORS: Record<FloodClass, string> = { primary: '#d7301f', low: '#8ecae6', dense: '#1d3f8a' };
+const FLOOD_LABELS: Record<FloodClass, string> = { primary: '1급 후보 (저지대+밀집)', low: '저지대', dense: '밀집' };
+const FLOOD_CLASSES: FloodClass[] = ['primary', 'low', 'dense'];
 const ROAD_COLOR = '#5d6571';
 const BASEMENT_COLOR = '#6f9bc2';
 const GROUND_OPACITY_WITH_BASEMENT = 0.2;
@@ -238,7 +244,7 @@ function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
   return geometry;
 }
 
-type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'satellite' | 'relief';
+type LayerKey = 'buildings' | 'roads' | 'basement' | 'crowd' | 'areas' | 'terrain' | 'satellite' | 'relief' | 'flood';
 type LayerState = Record<LayerKey, boolean>;
 type CategoryState = Record<BuildingCategory, boolean>;
 
@@ -253,6 +259,7 @@ const DEFAULT_LAYERS: LayerState = {
   terrain: false,
   satellite: false,
   relief: true,
+  flood: false,
 };
 
 const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
@@ -264,6 +271,7 @@ const LAYER_OPTIONS: { key: LayerKey; label: string; swatch: string }[] = [
   { key: 'terrain', label: '지형도', swatch: '#cfd8c4' },
   { key: 'satellite', label: '위성사진', swatch: '#5b7a5a' },
   { key: 'relief', label: '지형(고저)', swatch: HIGH_RELIEF_COLOR },
+  { key: 'flood', label: '침수 선별', swatch: FLOOD_COLORS.primary },
 ];
 
 /** Handles the scene effect needs after it builds the scene, so toggles can update it in place. */
@@ -281,6 +289,8 @@ interface CityView {
   buildBasement: () => void;
   buildTerrain: () => void;
   buildSatellite: () => void;
+  flood: THREE.Group;
+  buildFlood: () => void;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -310,6 +320,8 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
   if (layers.satellite) view.buildSatellite();
   view.satellite.visible = layers.satellite;
   if (view.relief) view.relief.visible = layers.relief;
+  if (layers.flood) view.buildFlood();
+  view.flood.visible = layers.flood;
   view.roads.visible = layers.roads;
   view.basement.visible = layers.basement;
   view.crowd.visible = layers.crowd;
@@ -342,6 +354,11 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       .then(setElevation)
       .catch(() => setElevation(null));
   }, []);
+  // Screening runs once per change of the inputs, not on every render
+  const floodCells = useMemo(
+    () => (elevation ? floodScreening(elevation, buildings, computeBounds(buildings, roads)) : []),
+    [elevation, buildings, roads],
+  );
   // Compass ring, rotated every frame so N points to true north on screen
   const compassRef = useRef<HTMLDivElement>(null);
 
@@ -622,6 +639,53 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     const buildTerrain = () => buildImagery('Base', terrain, TERRAIN_Y);
     const buildSatellite = () => buildImagery('Satellite', satellite, IMAGERY_Y);
 
+    // Flood screening tint over the DEM cells picked by floodScreening. Built on first use.
+    const flood = new THREE.Group();
+    scene.add(flood);
+    const floodParts: { geometry?: THREE.BufferGeometry; material?: THREE.MeshBasicMaterial } = {};
+    let floodBuilt = false;
+    const buildFlood = () => {
+      if (floodBuilt || !elevation) return;
+      floodBuilt = true;
+      const positions: number[] = [];
+      const colors: number[] = [];
+      const indices: number[] = [];
+      const color = new THREE.Color();
+      const halfX = elevation.stepX / 2;
+      const halfZ = elevation.stepZ / 2;
+      for (const cell of floodCells) {
+        const cx = elevation.originX + cell.col * elevation.stepX;
+        const cz = elevation.originZ + cell.row * elevation.stepZ;
+        const base = positions.length / 3;
+        // Corners in order NW, NE, SW, SE, each following the ground height
+        for (const [x, z] of [
+          [cx - halfX, cz - halfZ],
+          [cx + halfX, cz - halfZ],
+          [cx - halfX, cz + halfZ],
+          [cx + halfX, cz + halfZ],
+        ]) {
+          positions.push(x, elevationAt(elevation, x, z) + FLOOD_Y, z);
+          color.set(FLOOD_COLORS[cell.cls]);
+          colors.push(color.r, color.g, color.b);
+        }
+        indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setIndex(indices);
+      const material = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      floodParts.geometry = geometry;
+      floodParts.material = material;
+      flood.add(new THREE.Mesh(geometry, material));
+    };
+
     viewRef.current = {
       renderer,
       ground,
@@ -633,9 +697,11 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       areas,
       terrain,
       satellite,
+      flood,
       buildBasement,
       buildTerrain,
       buildSatellite,
+      buildFlood,
       flyTo,
     };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
@@ -774,6 +840,8 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       for (const geometry of imageryGeometries) geometry.dispose();
       for (const material of imageryMaterials) material.dispose();
       for (const texture of imageryTextures) texture.dispose();
+      floodParts.geometry?.dispose();
+      floodParts.material?.dispose();
       for (const geometry of basementGeometries) geometry.dispose();
       basementMaterial.dispose();
       viewRef.current = null;
@@ -782,7 +850,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       renderer.dispose();
       canvas.remove();
     };
-  }, [buildings, roads, congestion, elevation]);
+  }, [buildings, roads, congestion, elevation, floodCells]);
 
   useEffect(() => {
     categoriesRef.current = categories;
@@ -804,6 +872,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     terrain: tilesCovering(computeBounds(buildings, roads)).length,
     satellite: tilesCovering(computeBounds(buildings, roads)).length,
     relief: elevation ? elevation.heights.length : 0,
+    flood: floodCells.length,
   };
   const categoryCounts = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<BuildingCategory, number>;
   for (const b of aboveGround) categoryCounts[categorize(b)]++;
@@ -856,6 +925,16 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
                   <span className="label">{category}</span>
                   <span className="count">{categoryCounts[category].toLocaleString()}</span>
                 </label>
+              ))}
+            {option.key === 'flood' &&
+              layers.flood &&
+              FLOOD_CLASSES.map((cls) => (
+                <div key={cls} className="legend-item legend-sub legend-level">
+                  <span aria-hidden="true" />
+                  <span className="swatch" style={{ background: FLOOD_COLORS[cls] }} aria-hidden="true" />
+                  <span className="label">{FLOOD_LABELS[cls]}</span>
+                  <span className="count">{floodCells.filter((cell) => cell.cls === cls).length.toLocaleString()}</span>
+                </div>
               ))}
             {option.key === 'areas' &&
               layers.areas &&
