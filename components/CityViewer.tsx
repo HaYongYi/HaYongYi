@@ -14,6 +14,8 @@ import { submergedCells } from '@/lib/water-level';
 import { findEvacuationRoute, type EvacuationRoute, type Shelter } from '@/lib/evacuation';
 import { analyzeSkyline, type SkylineResult } from '@/lib/skyline';
 import SkylinePanel from '@/components/SkylinePanel';
+import ViewpointTable, { type ViewpointRow } from '@/components/ViewpointTable';
+import { VIEWPOINTS, type NamedViewpoint } from '@/lib/viewpoints';
 import { lonLatToMeters } from '@/lib/geo';
 
 interface CityViewerProps {
@@ -327,6 +329,7 @@ interface CityView {
   /** Tints silhouette buildings (visible) and ridge-crossing buildings (intruding) */
   applySkyline: (result: SkylineResult | null) => void;
   flyTo: (preset: ViewPreset) => void;
+  flyToPoint: (x: number, z: number) => void;
 }
 
 export type ViewPreset = 'default' | 'top' | 'south' | 'north' | 'east' | 'west';
@@ -452,6 +455,24 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     viewpointModeRef.current = viewpointMode;
   }, [viewpointMode]);
   const buildingNameById = useMemo(() => new Map(buildings.map((b) => [b.id, b.name])), [buildings]);
+  const nameOf = (id: string | null) => (id ? buildingNameById.get(id) ?? id : '-');
+
+  // Comparison of the named viewpoints, computed only while the table is open
+  const [tableOpen, setTableOpen] = useState(false);
+  const viewpointRows = useMemo<ViewpointRow[]>(() => {
+    if (!tableOpen || elevation === undefined) return [];
+    return VIEWPOINTS.map((v) => {
+      const { metrics } = analyzeSkyline([v.x, v.z], buildings, elevation ?? null);
+      return { viewpoint: v, metrics, dominantName: nameOf(metrics.dominantBuildingId) };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableOpen, buildings, elevation, buildingNameById]);
+
+  const showViewpoint = (v: NamedViewpoint) => {
+    setViewpointMode(false);
+    setViewpoint([v.x, v.z]);
+    viewRef.current?.flyToPoint(v.x, v.z);
+  };
 
   const findRoute = (building: Building) => {
     const result = findEvacuationRoute([building.x, building.z], shelters, roads, elevation ?? null, waterLevel);
@@ -533,6 +554,16 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       tween.fromTarget.copy(controls.target);
       tween.toPos.copy(pose.position);
       tween.toTarget.copy(pose.target);
+      tween.start = performance.now();
+      tween.active = true;
+    };
+    // Brings the camera to a ground point, looking at it from the south-east at street scale
+    const flyToPoint = (x: number, z: number) => {
+      const y = elevationAt(elevation, x, z);
+      tween.fromPos.copy(camera.position);
+      tween.fromTarget.copy(controls.target);
+      tween.toTarget.set(x, y, z);
+      tween.toPos.set(x + 350, y + 260, z + 450);
       tween.start = performance.now();
       tween.active = true;
     };
@@ -895,6 +926,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       buildSatellite,
       buildFlood,
       flyTo,
+      flyToPoint,
     };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
     applySkyline(skylineRef.current);
@@ -1123,10 +1155,28 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
           {viewpointMode ? '시점 클릭 중…' : '스카이라인 시점'}
         </button>
       </div>
+      <div className="view-presets analysis-tools" role="group" aria-label="대표 시점">
+        {VIEWPOINTS.map((v) => (
+          <button
+            key={v.key}
+            type="button"
+            className={viewpoint && viewpoint[0] === v.x && viewpoint[1] === v.z ? 'active' : undefined}
+            onClick={() => showViewpoint(v)}
+          >
+            {v.name}
+          </button>
+        ))}
+        <button type="button" className={tableOpen ? 'active' : undefined} onClick={() => setTableOpen((on) => !on)}>
+          비교표
+        </button>
+      </div>
+      {tableOpen && viewpointRows.length > 0 && (
+        <ViewpointTable rows={viewpointRows} onPick={showViewpoint} onClose={() => setTableOpen(false)} />
+      )}
       {skyline && (
         <SkylinePanel
           result={skyline}
-          buildingName={(id) => (id ? buildingNameById.get(id) ?? id : '-')}
+          buildingName={nameOf}
           onClose={() => {
             setViewpoint(null);
             setViewpointMode(false);
