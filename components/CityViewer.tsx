@@ -12,6 +12,8 @@ import { elevationAt, type ElevationGrid } from '@/lib/elevation';
 import { floodScreening, type FloodClass } from '@/lib/flood-risk';
 import { submergedCells } from '@/lib/water-level';
 import { findEvacuationRoute, type EvacuationRoute, type Shelter } from '@/lib/evacuation';
+import { analyzeSkyline, type SkylineResult } from '@/lib/skyline';
+import SkylinePanel from '@/components/SkylinePanel';
 import { lonLatToMeters } from '@/lib/geo';
 
 interface CityViewerProps {
@@ -61,6 +63,9 @@ function setTranslucent(material: THREE.MeshStandardMaterial, on: boolean, opaci
 const BACKGROUND = '#e9edf2';
 const HOVER_EMISSIVE = '#4cc9f0';
 const SELECTED_EMISSIVE = '#ff7a3d';
+/** Skyline analysis tints: buildings crossing the terrain line, and buildings on the silhouette */
+const INTRUDE_EMISSIVE = '#d7301f';
+const VISIBLE_EMISSIVE = '#ffb703';
 /** Pointer travel (px) above which a press is treated as a camera drag, not a click. */
 const CLICK_TOLERANCE = 4;
 
@@ -319,6 +324,8 @@ interface CityView {
   setWaterLevel: (level: number) => void;
   shelterGroup: THREE.Group;
   setRoute: (path: [number, number][] | null) => void;
+  /** Tints silhouette buildings (visible) and ridge-crossing buildings (intruding) */
+  applySkyline: (result: SkylineResult | null) => void;
   flyTo: (preset: ViewPreset) => void;
 }
 
@@ -370,6 +377,12 @@ function applyLayers(view: CityView, layers: LayerState, categories: CategorySta
 export default function CityViewer({ buildings, roads = [], congestion = [] }: CityViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Building | null>(null);
+  // Skyline analysis: while viewpointMode is on, a click on the ground sets the viewpoint
+  const [viewpointMode, setViewpointMode] = useState(false);
+  const viewpointModeRef = useRef(false);
+  const [viewpoint, setViewpoint] = useState<[number, number] | null>(null);
+  // Latest analysis, so a scene rebuild keeps its tints
+  const skylineRef = useRef<SkylineResult | null>(null);
   const [layers, setLayers] = useState<LayerState>(DEFAULT_LAYERS);
   const [categories, setCategories] = useState<CategoryState>(DEFAULT_CATEGORIES);
   const categoriesRef = useRef<CategoryState>(DEFAULT_CATEGORIES);
@@ -425,6 +438,20 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
   useEffect(() => {
     viewRef.current?.setRoute(activeRoute?.result.path ?? null);
   }, [activeRoute]);
+
+  // Skyline analysis runs when the viewpoint changes; the scene is tinted from the result
+  const skyline = useMemo(
+    () => (viewpoint && elevation !== undefined ? analyzeSkyline(viewpoint, buildings, elevation ?? null) : null),
+    [viewpoint, buildings, elevation],
+  );
+  useEffect(() => {
+    skylineRef.current = skyline;
+    viewRef.current?.applySkyline(skyline);
+  }, [skyline]);
+  useEffect(() => {
+    viewpointModeRef.current = viewpointMode;
+  }, [viewpointMode]);
+  const buildingNameById = useMemo(() => new Map(buildings.map((b) => [b.id, b.name])), [buildings]);
 
   const findRoute = (building: Building) => {
     const result = findEvacuationRoute([building.x, building.z], shelters, roads, elevation ?? null, waterLevel);
@@ -824,12 +851,35 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     };
     setWaterLevel(waterLevelRef.current);
 
+    // Skyline viewpoint marker and silhouette tints
+    const viewpointMarker = new THREE.Mesh(
+      new THREE.ConeGeometry(5, 14, 16),
+      new THREE.MeshStandardMaterial({ color: '#7b2cbf', roughness: 0.5 }),
+    );
+    viewpointMarker.visible = false;
+    scene.add(viewpointMarker);
+    const applySkyline = (result: SkylineResult | null) => {
+      if (result) {
+        const [vx, vz] = result.viewpoint;
+        viewpointMarker.position.set(vx, elevationAt(elevation, vx, vz) + 7, vz);
+        viewpointMarker.visible = true;
+      } else {
+        viewpointMarker.visible = false;
+      }
+      for (const mesh of meshes) {
+        const id = (mesh.userData.building as Building).id;
+        mesh.userData.skyline = !result ? null : result.intrudingIds.has(id) ? 'intrude' : result.visibleIds.has(id) ? 'visible' : null;
+        refresh(mesh);
+      }
+    };
+
     viewRef.current = {
       renderer,
       water,
       setWaterLevel,
       shelterGroup,
       setRoute,
+      applySkyline,
       ground,
       relief,
       basement,
@@ -847,23 +897,31 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       flyTo,
     };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
+    applySkyline(skylineRef.current);
 
     // Hover and selection highlighting
     let hovered: BuildingMesh | null = null;
     let picked: BuildingMesh | null = null;
 
-    const refresh = (mesh: BuildingMesh) => {
+    function refresh(mesh: BuildingMesh) {
       const material = mesh.material;
+      const skyline = mesh.userData.skyline as 'intrude' | 'visible' | null | undefined;
       if (mesh === picked) {
         material.emissive.set(SELECTED_EMISSIVE);
         material.emissiveIntensity = 0.45;
       } else if (mesh === hovered) {
         material.emissive.set(HOVER_EMISSIVE);
         material.emissiveIntensity = 0.3;
+      } else if (skyline === 'intrude') {
+        material.emissive.set(INTRUDE_EMISSIVE);
+        material.emissiveIntensity = 0.6;
+      } else if (skyline === 'visible') {
+        material.emissive.set(VISIBLE_EMISSIVE);
+        material.emissiveIntensity = 0.25;
       } else {
         material.emissiveIntensity = 0;
       }
-    };
+    }
 
     // Picking
     const raycaster = new THREE.Raycaster();
@@ -875,6 +933,15 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects(meshes.filter((mesh) => mesh.visible), false)[0];
       return hit ? (hit.object as BuildingMesh) : null;
+    };
+    // Ground point under the pointer, on the relief when there is one, else on the flat plane
+    const pickGround = (event: PointerEvent): [number, number] | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObjects(relief ? [relief, ground] : [ground], false)[0];
+      return hit ? [hit.point.x, hit.point.z] : null;
     };
 
     let pressX = 0;
@@ -898,6 +965,11 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
 
     const onPointerUp = (event: PointerEvent) => {
       if (Math.hypot(event.clientX - pressX, event.clientY - pressY) > CLICK_TOLERANCE) return;
+      if (viewpointModeRef.current) {
+        const point = pickGround(event);
+        if (point) setViewpoint(point);
+        return;
+      }
       const hit = pick(event);
       const previous = picked;
       picked = hit;
@@ -988,6 +1060,8 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       (water.material as THREE.Material).dispose();
       markerGeometry.dispose();
       markerMaterial.dispose();
+      viewpointMarker.geometry.dispose();
+      (viewpointMarker.material as THREE.Material).dispose();
       routeGeometry?.dispose();
       routeMaterial.dispose();
       for (const geometry of basementGeometries) geometry.dispose();
@@ -1039,7 +1113,26 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
             {preset.label}
           </button>
         ))}
+        <button
+          type="button"
+          className={viewpointMode ? 'active' : undefined}
+          aria-pressed={viewpointMode}
+          onClick={() => setViewpointMode((on) => !on)}
+          title="켜고 지면을 클릭하면 그 지점에서 본 스카이라인을 분석합니다"
+        >
+          {viewpointMode ? '시점 클릭 중…' : '스카이라인 시점'}
+        </button>
       </div>
+      {skyline && (
+        <SkylinePanel
+          result={skyline}
+          buildingName={(id) => (id ? buildingNameById.get(id) ?? id : '-')}
+          onClose={() => {
+            setViewpoint(null);
+            setViewpointMode(false);
+          }}
+        />
+      )}
       <div className="compass" aria-hidden="true">
         <div className="compass-ring" ref={compassRef}>
           <span className="compass-n">N</span>
