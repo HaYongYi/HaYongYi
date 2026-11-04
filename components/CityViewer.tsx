@@ -224,6 +224,42 @@ function drapeTriangle(a: [number, number], b: [number, number], c: [number, num
 const LOW_RELIEF_COLOR = '#e4f2b8';
 const HIGH_RELIEF_COLOR = '#2f7a3a';
 
+/**
+ * A disc built as concentric rings of triangles, every vertex lifted to the ground height,
+ * so it hugs slopes instead of cutting through them.
+ */
+function drapedDisc(cx: number, cz: number, radius: number, elevation: ElevationGrid | null): THREE.BufferGeometry {
+  const RINGS = 10;
+  const SEGMENTS = 48;
+  const LIFT = 0.06;
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const push = (x: number, z: number) => positions.push(x, elevationAt(elevation, x, z) + LIFT, z);
+  push(cx, cz);
+  for (let r = 1; r <= RINGS; r++) {
+    const d = (radius * r) / RINGS;
+    for (let i = 0; i < SEGMENTS; i++) {
+      const a = (i / SEGMENTS) * 2 * Math.PI;
+      push(cx + Math.cos(a) * d, cz + Math.sin(a) * d);
+    }
+  }
+  const ring = (r: number, i: number) => 1 + (r - 1) * SEGMENTS + (i % SEGMENTS);
+  for (let i = 0; i < SEGMENTS; i++) indices.push(0, ring(1, i), ring(1, i + 1));
+  for (let r = 1; r < RINGS; r++) {
+    for (let i = 0; i < SEGMENTS; i++) {
+      const a = ring(r, i);
+      const b = ring(r, i + 1);
+      const c = ring(r + 1, i);
+      const d = ring(r + 1, i + 1);
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
 /** The DEM as one mesh: a vertex per grid cell at its real height, colored by that height. */
 function reliefGeometry(grid: ElevationGrid): THREE.BufferGeometry {
   const positions: number[] = [];
@@ -626,11 +662,10 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
     roadMesh.receiveShadow = true;
     scene.add(roadMesh);
 
-    // Real-time crowd level per area, drawn as translucent discs on the ground
+    // Real-time crowd level per area, drawn as translucent discs draped on the ground
     const crowd = new THREE.Group();
     scene.add(crowd);
-    const crowdGeometry = new THREE.CircleGeometry(CROWD_RADIUS, 48);
-    crowdGeometry.rotateX(-Math.PI / 2);
+    const crowdGeometries: THREE.BufferGeometry[] = [];
     const crowdMaterials: THREE.MeshBasicMaterial[] = [];
     for (const area of congestion) {
       const material = new THREE.MeshBasicMaterial({
@@ -638,11 +673,12 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
         transparent: true,
         opacity: 0.45,
         depthWrite: false,
+        side: THREE.DoubleSide,
       });
       crowdMaterials.push(material);
-      const disc = new THREE.Mesh(crowdGeometry, material);
-      disc.position.set(area.x, elevationAt(elevation, area.x, area.z) + 0.06, area.z);
-      crowd.add(disc);
+      const geometry = drapedDisc(area.x, area.z, CROWD_RADIUS, elevation ?? null);
+      crowdGeometries.push(geometry);
+      crowd.add(new THREE.Mesh(geometry, material));
     }
 
     // Areas (권역): each area's nearest-center region as a tinted cell with an outline
@@ -1080,7 +1116,7 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       grid.dispose();
       roadGeometry.dispose();
       roadMaterial.dispose();
-      crowdGeometry.dispose();
+      for (const geometry of crowdGeometries) geometry.dispose();
       for (const material of crowdMaterials) material.dispose();
       for (const geometry of areaGeometries) geometry.dispose();
       for (const material of areaMaterials) material.dispose();
