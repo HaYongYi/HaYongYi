@@ -2,7 +2,7 @@
 const fs = require('fs');
 const {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell,
-  WidthType, ShadingType, BorderStyle, LevelFormat, PageNumber, Footer,
+  WidthType, ShadingType, BorderStyle, LevelFormat, PageNumber, Footer, PageBreak,
 } = require('docx');
 
 const [,, input, output] = process.argv;
@@ -32,6 +32,8 @@ function runs(text, base = {}) {
 const children = [];
 let i = 0;
 let titleDone = false;
+let breakBefore = false;
+const takeBreak = () => { const b = breakBefore; breakBefore = false; return b; };
 
 function para(text, opts = {}) {
   children.push(new Paragraph({ children: runs(text), spacing: { after: 120, line: 320 }, ...opts }));
@@ -40,9 +42,15 @@ function para(text, opts = {}) {
 function figurePlaceholder(text) {
   children.push(new Paragraph({
     alignment: AlignmentType.CENTER,
+    pageBreakBefore: takeBreak(),
     spacing: { before: 160, after: 160 },
     border: { top: { style: BorderStyle.DASHED, size: 6, color: '9AA7B6' }, bottom: { style: BorderStyle.DASHED, size: 6, color: '9AA7B6' } },
-    children: [new TextRun({ text: `[${text}] — 캡처를 여기에 삽입`, color: '5D6B7A', italics: true })],
+    children: [new TextRun({ text: `[캡처 삽입 자리]`, color: '5D6B7A', italics: true })],
+  }));
+  children.push(new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 240 },
+    children: runs(text, { size: 18 }),
   }));
 }
 
@@ -64,7 +72,7 @@ function table(rows) {
       width: { size: widths[k], type: WidthType.DXA },
       shading: isHeader ? { type: ShadingType.CLEAR, fill: 'E9EDF2', color: 'auto' } : undefined,
       margins: { top: 40, bottom: 40, left: 80, right: 80 },
-      children: [new Paragraph({ children: runs(c, { size: 18, bold: isHeader || undefined }), spacing: { after: 0 } })],
+      children: [new Paragraph({ children: runs(c, { size: n >= 8 ? 16 : 18, bold: isHeader || undefined }), spacing: { after: 0 } })],
     })),
   });
   children.push(new Table({ columnWidths: widths, width: { size: TEXT_W, type: WidthType.DXA }, rows: [mk(header, true), ...body.map((r) => mk(r, false))] }));
@@ -77,15 +85,20 @@ while (i < lines.length) {
     children.push(new Paragraph({ heading: HeadingLevel.TITLE, alignment: AlignmentType.CENTER, children: [new TextRun(line.slice(2))] }));
     titleDone = true; i++; continue;
   }
-  if (line.startsWith('## ')) { children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun(line.slice(3))] })); i++; continue; }
+  if (line.startsWith('## ')) { children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, pageBreakBefore: takeBreak(), children: [new TextRun(line.slice(3))] })); i++; continue; }
   if (line.startsWith('### ')) { children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun(line.slice(4))] })); i++; continue; }
   if (line.trim() === '---' || line.trim() === '') { i++; continue; }
   if (/^\*\*— .* —\*\*$/.test(line.trim())) {
     children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, children: [new TextRun({ text: line.trim().slice(2, -2), size: 24 })] }));
     i++; continue;
   }
-  if (line.startsWith('하용이 ')) {
-    children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 360 }, children: [new TextRun({ text: line, color: '5D6B7A' })] }));
+  if (line.startsWith('학번 ')) {
+    children.push(new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { after: 360 }, children: [new TextRun({ text: line, color: '5D6B7A' })] }));
+    i++; continue;
+  }
+  if (line.trim() === '<<<pagebreak>>>') {
+    // The next block starts a new page (a break paragraph of its own can leave a blank page)
+    breakBefore = true;
     i++; continue;
   }
   if (line.startsWith('|')) {
