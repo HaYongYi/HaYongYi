@@ -116,6 +116,8 @@ while (i < lines.length) {
     children.push(new Paragraph({ spacing: { after: 60, line: 320 }, indent: { left: 360, hanging: 360 }, children: [new TextRun(`${num[1]}. `), ...runs(num[2])] }));
     i++; continue;
   }
+  // Table captions stay on the same page as their table
+  if (/^\*\*표 \d+\.\*\*/.test(line)) { para(line, { keepNext: true, spacing: { before: 120, after: 80 } }); i++; continue; }
   // Paragraph: join wrapped lines until a blank line
   let text = line;
   while (i + 1 < lines.length && lines[i + 1].trim() !== '' && !/^(#|\||- |\d+\. |\{|---)/.test(lines[i + 1])) text += ' ' + lines[++i];
