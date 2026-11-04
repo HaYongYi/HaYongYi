@@ -25,6 +25,9 @@ type Json = Record<string, unknown>;
 
 const cache = new Map<string, { at: number; value: AreaCongestion | null }>();
 
+/** Error carried in the API's own RESULT envelope, as opposed to a network or parsing failure. */
+class ApiError extends Error {}
+
 /**
  * The XML-to-JSON shape nests lists as {NAME: {NAME: [...]}}. Unwrap to the flat items.
  */
@@ -71,6 +74,12 @@ async function fetchArea(key: string, name: string): Promise<AreaCongestion | nu
   // Each may also be a one-item array.
   const city = unwrap(json['SeoulRtd.citydata'] ?? json, 'CITYDATA')[0];
   if (!city || city.LIVE_PPLTN_STTS === undefined) {
+    // The API reports its own errors as {"RESULT.CODE", "RESULT.MESSAGE"}; those are not a parsing problem
+    const code = json['RESULT.CODE'] ?? (json.RESULT as Json | undefined)?.['RESULT.CODE'];
+    if (typeof code === 'string') {
+      const message = json['RESULT.MESSAGE'] ?? (json.RESULT as Json | undefined)?.['RESULT.MESSAGE'];
+      throw new ApiError(`${code}: ${String(message ?? '')}`);
+    }
     throw new Error(`unexpected response shape: ${JSON.stringify(json).slice(0, 300)}`);
   }
 
@@ -107,7 +116,13 @@ async function getArea(key: string, name: string): Promise<AreaCongestion | null
     cache.set(name, { at: Date.now(), value });
     return value;
   } catch (error) {
-    console.error(`[citydata] ${name} failed:`, error instanceof Error ? error.message : error);
+    // An error the API itself reported (e.g. ERROR-500 for one area) is expected now and then and only
+    // drops that area, so log it as a warning; the dev overlay opens on console.error alone
+    if (error instanceof ApiError) {
+      console.warn(`[citydata] ${name} unavailable: ${error.message}`);
+    } else {
+      console.error(`[citydata] ${name} failed:`, error instanceof Error ? error.message : error);
+    }
     return null;
   }
 }
