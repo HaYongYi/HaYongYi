@@ -929,11 +929,12 @@ export default function CityViewer({ buildings, roads = [], congestion = [] }: C
       flyToPoint,
     };
     applyLayers(viewRef.current, layersRef.current, categoriesRef.current);
-    applySkyline(skylineRef.current);
 
     // Hover and selection highlighting
     let hovered: BuildingMesh | null = null;
     let picked: BuildingMesh | null = null;
+    // Now that the highlight state exists, restore the tints of the latest analysis
+    applySkyline(skylineRef.current);
 
     function refresh(mesh: BuildingMesh) {
       const material = mesh.material;
