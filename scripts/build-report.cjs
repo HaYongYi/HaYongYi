@@ -65,6 +65,14 @@ function table(rows) {
   const total = need.reduce((a, b) => a + b, 0);
   const widths = need.map((w) => Math.floor((w / total) * TEXT_W));
   widths[n - 1] += TEXT_W - widths.reduce((a, b) => a + b, 0);
+  // Every column gets at least ~2 cm, taken from the widest column, so short labels never wrap per character
+  const MIN_DXA = 1150;
+  for (let k = 0; k < n; k++) {
+    if (widths[k] >= MIN_DXA) continue;
+    const widest = widths.indexOf(Math.max(...widths));
+    widths[widest] -= MIN_DXA - widths[k];
+    widths[k] = MIN_DXA;
+  }
   const mk = (cols, isHeader) => new TableRow({
     tableHeader: isHeader,
     cantSplit: true,
