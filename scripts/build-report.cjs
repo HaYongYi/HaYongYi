@@ -61,7 +61,7 @@ function table(rows) {
   const n = header.length;
   // Column widths follow the longest cell in each column (Korean counts double), with a floor
   const len = (t) => [...t.replace(/[*`]/g, '')].reduce((a, ch) => a + (ch.charCodeAt(0) > 255 ? 2 : 1), 0);
-  const need = header.map((_, k) => Math.max(6, ...cells.filter((_, r) => r !== 1).map((row) => Math.min(len(row[k] || ''), 36))));
+  const need = header.map((_, k) => Math.max(9, ...cells.filter((_, r) => r !== 1).map((row) => Math.min(len(row[k] || ''), 36))));
   const total = need.reduce((a, b) => a + b, 0);
   const widths = need.map((w) => Math.floor((w / total) * TEXT_W));
   widths[n - 1] += TEXT_W - widths.reduce((a, b) => a + b, 0);
